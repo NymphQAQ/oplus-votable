@@ -1,0 +1,503 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark light">
+  <title>oplus-votable · 电流控制</title>
+  <style>
+    :root {
+      color-scheme: dark light;
+      --bg: #0b111a;
+      --panel: #141d29;
+      --panel2: #192533;
+      --stroke: #293747;
+      --text: #edf4fb;
+      --muted: #98a7b7;
+      --accent: #6ccac5;
+      --good: #66cf9d;
+      --yellow: #efc47e;
+      --red: #f09494;
+      --radius: 17px;
+    }
+    @media (prefers-color-scheme: light) {
+      :root {
+        --bg: #f3f6f9;
+        --panel: #ffffff;
+        --panel2: #f6f8fb;
+        --stroke: #e1e8f0;
+        --text: #1a2935;
+        --muted: #647586;
+        --accent: #147d77;
+        --good: #14835a;
+        --yellow: #9c690c;
+        --red: #ae4343;
+      }
+    }
+    * { box-sizing: border-box; }
+    html,body { margin:0; min-height:100%; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Roboto", "Noto Sans SC", sans-serif; background:var(--bg); color:var(--text); -webkit-tap-highlight-color:transparent; }
+    button,input,select { font:inherit; }
+    button { cursor:pointer; }
+    button:disabled { opacity:.55; cursor:default; }
+    :focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+    .wrap { max-width:840px; margin:0 auto; padding: max(22px, env(safe-area-inset-top)) 18px calc(105px + env(safe-area-inset-bottom)); }
+    .topbar { display:flex; align-items:flex-start; justify-content:space-between; gap:14px; padding:8px 1px 24px; }
+    .brand { display:flex; align-items:center; gap:12px; }
+    .brandmark { width:44px; height:44px; display:grid; place-items:center; border-radius:15px; background:linear-gradient(145deg,#117c78,#48aeaa); color:white; font-size:23px; font-weight:800; }
+    h1 { margin:0; font-size:22px; letter-spacing:-.025em; }
+    .subtitle { color:var(--muted); font-size:12px; margin-top:4px; }
+    .pill { color:var(--accent); border:1px solid var(--stroke); background:var(--panel); border-radius:99px; padding:7px 10px; font-size:11px; white-space:nowrap; font-weight:650; }
+    .notice { border:1px solid var(--stroke); background:var(--panel); padding:13px 15px; border-radius:14px; color:var(--muted); font-size:12px; line-height:1.7; margin-bottom:16px; }
+    .notice strong {color:var(--text);}
+    .section-head { display:flex; align-items:center; justify-content:space-between; gap:8px; margin:22px 0 12px; }
+    .section-head h2 { font-size:15px; font-weight:700; margin:0; }
+    .section-head small { color:var(--muted); font-size:11px; }
+    .status-panel { padding:17px; border:1px solid var(--stroke); background:var(--panel); border-radius:var(--radius); }
+    .status-main { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+    .state-name { display:flex; align-items:center; gap:9px; font-size:17px; font-weight:750; }
+    .state-dot { width:9px; height:9px; border-radius:50%; background:var(--muted); box-shadow:0 0 0 4px color-mix(in srgb, var(--muted) 12%, transparent); }
+    .state-dot.good { background:var(--good); box-shadow:0 0 0 4px color-mix(in srgb, var(--good) 13%, transparent); }
+    .state-dot.warning { background:var(--yellow); }
+    .state-dot.danger { background:var(--red); }
+    .detail { color:var(--muted); font-size:12px; margin-top:6px; line-height:1.5; }
+    .state-meta { text-align:right; color:var(--muted); font-size:11px; line-height:1.8; flex-shrink:0; }
+    .metric-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; margin-top:15px; }
+    .metric { padding:12px 13px; border:1px solid var(--stroke); background:var(--panel2); border-radius:12px; min-width:0; }
+    .metric .name { color:var(--muted); font-size:11px; }
+    .metric .value { margin-top:8px; font-size:17px; font-weight:750; overflow-wrap:anywhere; }
+    .good-text { color:var(--good); } .warn-text { color:var(--yellow); } .danger-text { color:var(--red); }
+    .controls { display:flex; flex-wrap:wrap; gap:9px; align-items:center; margin-bottom:12px; }
+    .button { color:var(--text); border:1px solid var(--stroke); border-radius:11px; padding:10px 13px; background:var(--panel); font-size:12px; font-weight:650; }
+    .button.primary { background:var(--accent); color:var(--bg); border-color:var(--accent); }
+    .button:hover { filter:brightness(1.08); }
+    .select { color:var(--text); background:var(--panel); border:1px solid var(--stroke); border-radius:11px; padding:10px 9px; font-size:12px; min-width:100px; }
+    .search { min-width:100px; flex:1 1 145px; padding:10px 12px; border-radius:11px; background:var(--panel); color:var(--text); border:1px solid var(--stroke); font-size:12px; }
+    .auto { display:flex; align-items:center; gap:7px; font-size:12px; color:var(--muted); white-space:nowrap; padding:2px; }
+    .auto input { width:16px; height:16px; accent-color:var(--accent); }
+    .switch-row { display:flex; align-items:center; gap:10px; font-size:12px; color:var(--muted); margin:13px 0; cursor:pointer; }
+    .switch-row input { position:absolute; width:1px; height:1px; opacity:0; }
+    .switch-track { position:relative; width:46px; height:26px; flex-shrink:0; border-radius:13px; background:var(--panel2); border:1px solid var(--stroke); transition:background .18s; }
+    .switch-track::after { content:""; position:absolute; top:2px; left:2px; width:20px; height:20px; border-radius:50%; background:var(--muted); transition:transform .18s, background .18s; }
+    .switch-row input:checked + .switch-track { background:var(--accent); border-color:var(--accent); }
+    .switch-row input:checked + .switch-track::after { transform:translateX(20px); background:var(--bg); }
+    .switch-row input:disabled + .switch-track { opacity:.55; }
+    .switch-row input:focus-visible + .switch-track { outline:2px solid var(--accent); outline-offset:2px; }
+    .switch-text { font-weight:650; color:var(--text); }
+    .limit-control { margin-top:15px; display:grid; gap:9px; }
+    .limit-control .name { color:var(--muted); font-size:11px; }
+    .limit-control input[type=range] { width:100%; accent-color:var(--accent); }
+    .limit-control input[type=number] { width:100%; padding:10px 12px; border-radius:11px; background:var(--panel2); color:var(--text); border:1px solid var(--stroke); font-size:13px; font-variant-numeric:tabular-nums; }
+    .control-menu { display:grid; gap:10px; }
+    .control-entry { display:flex; gap:12px; align-items:center; text-align:left; width:100%; padding:18px 16px; border:1px solid var(--stroke); border-radius:var(--radius); background:var(--panel); color:var(--text); min-height:84px; }
+    .control-entry:hover { border-color:var(--accent); }
+    .control-entry:active { background:var(--panel2); }
+    .entry-icon { display:grid; place-items:center; width:38px; height:38px; border-radius:12px; background:var(--panel2); color:var(--accent); font-size:19px; flex-shrink:0; }
+    .entry-body { flex:1; min-width:0; display:grid; gap:6px; }
+    .entry-body strong { font-size:15px; }
+    .entry-body small { font-size:11px; color:var(--muted); line-height:1.6; }
+    .entry-chevron { color:var(--muted); font-size:30px; line-height:1; }
+    .control-detail { padding:0 0 18px; border:1px solid var(--stroke); border-radius:var(--radius); background:var(--panel); overflow:hidden; }
+    .detail-toolbar { display:flex; align-items:center; gap:12px; min-height:60px; border-bottom:1px solid var(--stroke); padding:8px 14px; font-size:15px; }
+    .detail-back { display:flex; align-items:center; gap:3px; border:0; border-radius:10px; background:var(--panel2); color:var(--accent); padding:6px 12px 6px 9px; font-size:29px; line-height:1; }
+    .detail-back span { font-size:12px; font-weight:750; }
+    .control-detail .proto-body { padding:16px; }
+    .setting-divider { height:1px; background:var(--stroke); margin:16px 0; }
+    .switch-row + .switch-row { border-top:1px solid var(--stroke); padding-top:15px; }
+    #control-index .switch-row { border-bottom:1px solid var(--stroke); padding-bottom:15px; }
+    .control-detail .switch-row { border-bottom:1px solid var(--stroke); padding-bottom:15px; }
+    .save-status { padding:10px 12px; border:1px solid var(--stroke); border-radius:10px; background:var(--panel2); font-size:12px; line-height:1.6; color:var(--good); margin:0 0 14px; }
+    .proto-card { border:1px solid var(--stroke); border-radius:var(--radius); background:var(--panel); margin-bottom:12px; overflow:hidden; }
+    .proto-card[open] { border-color:var(--accent); }
+    .proto-card > summary { display:flex; align-items:center; justify-content:space-between; gap:10px; cursor:pointer; padding:15px 16px; font-size:14px; font-weight:700; }
+    .proto-card > summary:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
+    .proto-card > summary .proto-tag { color:var(--muted); font-size:11px; font-weight:600; white-space:nowrap; }
+    .proto-card > summary .proto-tag.on { color:var(--good); }
+    .proto-card > summary .proto-tag.off { color:var(--muted); }
+    .proto-body { padding:0 16px 16px; }
+    .proto-body .metric { margin-bottom:14px; }
+    .adv-note { font-size:11px; color:var(--yellow); line-height:1.7; margin:0 0 14px; }
+    .vote-overview { display:flex; flex-wrap:wrap; gap:12px; align-items:baseline; }
+    .vote-overview strong { font-size:22px; color:var(--accent); font-variant-numeric:tabular-nums; }
+    .vote-list { margin-top:14px; display:grid; gap:7px; }
+    .vote-row { display:grid; grid-template-columns:minmax(0,1fr) auto auto; gap:12px; align-items:center; padding:10px 12px; border-radius:10px; background:var(--panel2); font-size:12px; }
+    .vote-row .vote-name { overflow-wrap:anywhere; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+    .vote-row .vote-value { font-variant-numeric:tabular-nums; font-weight:700; text-align:right; }
+    .vote-row .vote-off { color:var(--muted); }
+    .vote-row .vote-on { color:var(--good); }
+    .votable-toolbar { display:flex; flex-wrap:wrap; gap:9px; margin-top:16px; align-items:center; }
+    .votable-summary { color:var(--muted); font-size:12px; margin:11px 0 13px; line-height:1.6; }
+    .votable-groups { display:grid; gap:17px; }
+    .votable-group-title { font-size:13px; font-weight:750; margin:0 0 9px; display:flex; gap:9px; align-items:center; }
+    .votable-group-title span { color:var(--muted); font-size:11px; font-weight:500; }
+    .votable-card { border:1px solid var(--stroke); border-radius:11px; background:var(--panel2); margin-bottom:8px; overflow:hidden; }
+    .votable-card[open] { border-color:var(--accent); }
+    .votable-card summary { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:12px; align-items:center; cursor:pointer; padding:13px; min-height:50px; }
+    .votable-card summary::marker { color:var(--accent); }
+    .votable-card summary:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
+    .votable-title { display:block; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; font-weight:750; overflow-wrap:anywhere; }
+    .votable-desc { display:block; color:var(--muted); font-size:11px; line-height:1.5; margin-top:4px; }
+    .votable-value { font-size:12px; font-weight:750; font-variant-numeric:tabular-nums; text-align:right; }
+    .votable-meta { display:block; font-size:10px; margin-top:4px; color:var(--muted); font-weight:500; }
+    .votable-detail { padding:0 13px 13px; }
+    .votable-force { display:flex; flex-wrap:wrap; gap:8px 14px; padding:10px 11px; border:1px solid var(--stroke); border-radius:9px; background:var(--panel); font-size:11px; line-height:1.65; margin-bottom:9px; }
+    .votable-force strong { font-weight:750; }
+    .protocol-vote-row { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px 12px; align-items:center; padding:12px; border:1px solid var(--stroke); border-radius:10px; background:var(--panel2); }
+    .protocol-vote-flags { grid-column:1/-1; overflow-wrap:anywhere; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+    .status-panel > summary { cursor:pointer; font-size:13px; font-weight:750; }
+    .status-panel > summary:focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
+    .votable-force .danger-text { color:var(--red); }
+    .votable-voters { display:grid; gap:6px; }
+    .votable-voters .vote-row { padding:9px 10px; border:1px solid var(--stroke); background:var(--panel); grid-template-columns:minmax(0,1fr) auto auto; gap:8px; font-size:11px; }
+    .vote-note { font-size:11px; color:var(--muted); line-height:1.65; margin-top:12px; }
+    #negRefresh { margin-top:12px; }
+    #advReset { margin-top:18px; }
+    #protoResetUFCS, #protoResetPPS { margin-top:14px; }
+    #protoSaveStatusUFCS, #protoSaveStatusPPS { margin-top:12px; }
+    .log-pane { background:var(--panel); border:1px solid var(--stroke); border-radius:var(--radius); overflow:hidden; }
+    .log-header { padding:14px 15px; border-bottom:1px solid var(--stroke); display:flex; justify-content:space-between; align-items:center; gap:10px; color:var(--muted); font-size:11px; }
+    .log-list { max-height:530px; overflow:auto; overscroll-behavior:contain; padding:0 12px; }
+    .entry { padding:13px 3px 14px; border-bottom:1px solid var(--stroke); }
+    .entry:last-child { border-bottom:none; }
+    .entry-title { display:flex; justify-content:space-between; gap:8px; align-items:center; flex-wrap:wrap; }
+    .chip { display:inline-block; font-size:11px; font-weight:700; border-radius:6px; padding:4px 7px; background:var(--panel2); color:var(--muted); }
+    .chip.good {color:var(--good);} .chip.warning {color:var(--yellow);} .chip.danger {color:var(--red);}
+    .when { color:var(--muted); font-size:11px; }
+    .summary { font-size:12px; margin-top:8px; color:var(--text); word-break:break-word; }
+    .raw { display:block; margin-top:9px; color:var(--muted); font-size:10.5px; background:var(--panel2); border-radius:7px; padding:10px; white-space:pre-wrap; overflow-wrap:anywhere; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; line-height:1.5; }
+    .empty { padding:42px 16px; text-align:center; font-size:13px; color:var(--muted); line-height:1.75; }
+    .footer { text-align:center; color:var(--muted); font-size:11px; margin:23px 0 0; line-height:1.7; }
+    .eyebrow { font-size:11px; font-weight:700; letter-spacing:.07em; color:var(--muted); }
+    .protocol-hero { padding:20px; border:1px solid var(--stroke); border-radius:var(--radius); background:var(--panel); }
+    .protocol-head { display:flex; flex-wrap:wrap; align-items:center; gap:12px; margin:11px 0 9px; }
+    .protocol-head strong { font-size:26px; letter-spacing:-.035em; overflow-wrap:anywhere; }
+    .protocol-badge { padding:5px 9px; border-radius:7px; font-size:11px; color:var(--accent); background:var(--panel2); }
+    .protocol-badge.warning { color:var(--yellow); }
+    .protocol-badge.good { color:var(--good); }
+    .protocol-reason { font-size:12px; line-height:1.7; color:var(--muted); margin:0; }
+    .protocol-list { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:9px; }
+    .protocol-item { display:flex; justify-content:space-between; align-items:center; gap:7px; padding:12px; background:var(--panel2); border-radius:10px; font-size:12px; }
+    .protocol-item span:last-child { color:var(--muted); font-size:11px; white-space:nowrap; }
+    .protocol-item.active span:last-child { color:var(--good); }
+    .tab-page { min-height:55vh; }
+    .bottom-nav { position:fixed; bottom:0; left:0; right:0; z-index:30; background:var(--panel); border-top:1px solid var(--stroke); padding-bottom:env(safe-area-inset-bottom); }
+    .bottom-nav-inner { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); max-width:840px; margin:0 auto; padding:7px 12px; }
+    .nav-tab { display:flex; flex-direction:column; justify-content:center; align-items:center; gap:4px; min-height:54px; border:0; border-radius:12px; background:transparent; color:var(--muted); font-size:11px; font-weight:650; }
+    .nav-tab svg { width:21px; height:21px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
+    .nav-tab[aria-selected="true"] { color:var(--accent); background:var(--panel2); }
+    .nav-tab:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
+    @media (min-width:620px) { .protocol-list { grid-template-columns:repeat(3,minmax(0,1fr)); } }
+    #error { background:color-mix(in srgb,var(--red) 9%,var(--panel)); border:1px solid color-mix(in srgb,var(--red) 33%,var(--stroke)); padding:12px; border-radius:10px; color:var(--red); font-size:12px; margin-bottom:14px; white-space:pre-wrap; }
+    [hidden] { display:none !important; }
+    @media (min-width:620px) { .metric-grid {grid-template-columns:repeat(4,minmax(0,1fr));} }
+    @media (max-width:390px) { .wrap {padding-left:13px;padding-right:13px;} .brandmark{width:39px;height:39px;} h1{font-size:19px;} }
+  </style>
+  <script src="./log-utils.js" defer></script>
+  <script src="./app.js" defer></script>
+</head>
+<body>
+  <main class="wrap">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brandmark" aria-hidden="true">U</div>
+        <div><h1>oplus-votable</h1><div class="subtitle">电流控制 · 电池实时状态</div></div>
+      </div>
+      <span class="pill">ADAPTIVE · v0.8.3</span>
+    </header>
+
+    <div id="error" role="alert" hidden></div>
+    <section id="page-control" class="tab-page" role="tabpanel" aria-labelledby="tab-control" hidden>
+    <div id="control-index">
+    <div class="notice"><strong>oplus-votable 电流控制</strong> · 仅在 UFCS / PPS 协议在线且对应开关开启时，使用自适应投票值控制电流上限。VOOC / SUPERVOOC 仍可只读识别和诊断，不再进行主动电流控制。UFCS 默认电压 4560 mV / 投票上限 9000 mA；PPS 默认电压 4500 mV / 投票上限 5000 mA，最高 5800 mA。温度限制仍未启用，控制存在风险。</div>
+    <div class="section-head"><h2>电流控制</h2><small>自适应 · 仅 UFCS / PPS 双协议调参</small></div>
+    <section class="status-panel" aria-label="电流控制总览">
+      <p id="controlReadiness" class="detail" aria-live="polite">正在读取控制状态…</p>
+      <p id="controlLease" class="detail">检查本模块控制进程…</p>
+      <label class="switch-row">
+        <input type="checkbox" id="monitorSwitch" role="switch" aria-describedby="controlReadiness">
+        <span class="switch-track" aria-hidden="true"></span>
+        <span class="switch-text">自动监测：<span id="monitorState">读取中…</span></span>
+      </label>
+    </section>
+
+    <div class="section-head"><h2>设置入口</h2><small>点击进入独立设置页</small></div>
+    <section id="control-home" class="control-menu" aria-label="电流控制设置入口">
+      <button class="control-entry" type="button" data-detail="UFCS" aria-controls="control-detail-UFCS">
+        <span class="entry-icon">⚡</span>
+        <span class="entry-body"><strong>UFCS 设置</strong><small>设定电压、投票上限、独立开关</small></span>
+        <span class="proto-tag" id="protoTagUFCS">读取中…</span><span class="entry-chevron" aria-hidden="true">›</span>
+      </button>
+      <button class="control-entry" type="button" data-detail="PPS" aria-controls="control-detail-PPS">
+        <span class="entry-icon">🔋</span>
+        <span class="entry-body"><strong>PPS 设置</strong><small>设定电压、投票上限（最高 5800）</small></span>
+        <span class="proto-tag" id="protoTagPPS">读取中…</span><span class="entry-chevron" aria-hidden="true">›</span>
+      </button>
+      <button class="control-entry" type="button" data-detail="advanced" aria-controls="control-detail-advanced">
+        <span class="entry-icon">⚙</span>
+        <span class="entry-body"><strong>电流控制</strong><small>高级设置 · 初始值、监控时间、步进、升流截止压差</small></span>
+        <span class="entry-chevron" aria-hidden="true">›</span>
+      </button>
+    </section>
+    </div>
+    <section id="control-detail-UFCS" class="control-detail" hidden aria-label="UFCS 独立设置">
+      <div class="detail-toolbar">
+        <button type="button" class="detail-back" data-control-back aria-label="返回控制主页">‹ <span>返回</span></button>
+        <strong>UFCS 设置</strong>
+      </div>
+      <div class="proto-body">
+        <label class="switch-row">
+          <input type="checkbox" id="protoSwitchUFCS" role="switch">
+          <span class="switch-track" aria-hidden="true"></span>
+          <span class="switch-text">协议开关：<span id="protoStateUFCS">读取中…</span></span>
+        </label>
+        <div class="setting-divider" role="separator" aria-hidden="true"></div>
+        <div class="metric"><div class="name">当前投票值</div><div id="targetValueUFCS" class="value">—</div></div>
+        <div class="limit-control">
+          <div class="name">设定电压（mV）</div>
+          <input type="range" id="limitRangeUFCS" min="3800" max="4560" step="10" value="4560" aria-label="UFCS 设定电压滑动条">
+          <input type="number" id="limitInputUFCS" min="3800" max="4560" step="10" value="4560" aria-label="UFCS 设定电压输入框">
+          <div class="detail">设定电压：<strong id="limitValueUFCS">4560</strong> mV · 默认 4560，可调范围 3800–4560</div>
+        </div>
+        <div class="limit-control">
+          <div class="name">投票值上限（mA）</div>
+          <input type="range" id="voteMaxRangeUFCS" min="1000" max="13500" step="50" value="9000" aria-label="UFCS 投票值上限滑动条">
+          <input type="number" id="voteMaxInputUFCS" min="1000" max="13500" step="50" value="9000" aria-label="UFCS 投票值上限输入框">
+          <div class="detail">投票值上限：<strong id="voteMaxValueUFCS">9000</strong> mA · 默认 9000，可调范围 1000–13500</div>
+        </div>
+        <div class="vote-note">检测到 UFCS 且协议开关开启时自动接管（投票值单位 mA）。投票值从「投票初始值」起步，每「监控时间」检查一次：电压低于「设定值 + 升流截止压差」时按「提升步进」上升（最高为投票值上限）；电压超过设定值时按「降低步进」下降（最低 1000 mA）；两者之间保持不变。协议不再在线或开关关闭时立即撤销并入日志。</div>
+        <button type="button" id="protoResetUFCS" class="button">恢复默认</button>
+        <p id="protoSaveStatusUFCS" class="save-status" role="status">恢复默认仅重置本协议的电压和投票上限。</p>
+      </div>
+    </section>
+    <section id="control-detail-PPS" class="control-detail" hidden aria-label="PPS 独立设置">
+      <div class="detail-toolbar">
+        <button type="button" class="detail-back" data-control-back aria-label="返回控制主页">‹ <span>返回</span></button>
+        <strong>PPS 设置</strong>
+      </div>
+      <div class="proto-body">
+        <label class="switch-row">
+          <input type="checkbox" id="protoSwitchPPS" role="switch">
+          <span class="switch-track" aria-hidden="true"></span>
+          <span class="switch-text">协议开关：<span id="protoStatePPS">读取中…</span></span>
+        </label>
+        <div class="setting-divider" role="separator" aria-hidden="true"></div>
+        <div class="metric"><div class="name">当前投票值</div><div id="targetValuePPS" class="value">—</div></div>
+        <div class="limit-control">
+          <div class="name">设定电压（mV）</div>
+          <input type="range" id="limitRangePPS" min="3800" max="4560" step="10" value="4500" aria-label="PPS 设定电压滑动条">
+          <input type="number" id="limitInputPPS" min="3800" max="4560" step="10" value="4500" aria-label="PPS 设定电压输入框">
+          <div class="detail">设定电压：<strong id="limitValuePPS">4500</strong> mV · 默认 4500，可调范围 3800–4560</div>
+        </div>
+        <div class="limit-control">
+          <div class="name">投票值上限（mA）</div>
+          <input type="range" id="voteMaxRangePPS" min="1000" max="5800" step="50" value="5000" aria-label="PPS 投票值上限滑动条">
+          <input type="number" id="voteMaxInputPPS" min="1000" max="5800" step="50" value="5000" aria-label="PPS 投票值上限输入框">
+          <div class="detail">投票值上限：<strong id="voteMaxValuePPS">5000</strong> mA · 默认 5000，最高 5800；已有有效配置保留</div>
+        </div>
+        <div class="vote-note">检测到 PPS 且协议开关开启时自动接管 PPS_CURR（投票值单位 mA）。投票值从「投票初始值」起步，每「监控时间」检查一次：电压低于「设定值 + 升流截止压差」时按「提升步进」上升（最高为投票值上限）；电压超过设定值时按「降低步进」下降（最低 1000 mA）；两者之间保持不变。协议不再在线或开关关闭时立即撤销并入日志。异常时可能无法自动恢复，请确保能够随时拔掉充电线。</div>
+        <button type="button" id="protoResetPPS" class="button">恢复默认</button>
+        <p id="protoSaveStatusPPS" class="save-status" role="status">恢复默认仅重置本协议的电压和投票上限。</p>
+      </div>
+    </section>
+    <section id="control-detail-advanced" class="control-detail" hidden aria-label="电流控制高级设置">
+      <div class="detail-toolbar">
+        <button type="button" class="detail-back" data-control-back aria-label="返回控制主页">‹ <span>返回</span></button>
+        <strong>电流控制高级设置</strong>
+      </div>
+      <div class="proto-body">
+        <p id="advSaveStatus" class="save-status" role="status">设置自动保存到模块私有目录，重启后继续生效。</p>
+        <p class="adv-note">这里的参数为高级参数，非必要请勿调节。这些参数直接对应控制算法，修改后立即对 UFCS / PPS 生效。</p>
+        <div class="limit-control">
+          <div class="name">投票初始值（mA）</div>
+          <input type="range" id="advInitialRange" min="1000" max="10000" step="100" value="1000" aria-label="投票初始值滑动条">
+          <input type="number" id="advInitialInput" min="1000" max="10000" step="100" value="1000" aria-label="投票初始值输入框">
+          <div class="detail">投票初始值：<strong id="advInitialValue">1000</strong> mA · 默认 1000，可调范围 1000–10000 · 数值越高，投票越快到达设定值</div>
+        </div>
+        <div class="setting-divider" role="separator" aria-hidden="true"></div>
+        <div class="limit-control">
+          <div class="name">监控时间（ms）</div>
+          <input type="range" id="advIntervalRange" min="20" max="200" step="10" value="100" aria-label="监控时间滑动条">
+          <input type="number" id="advIntervalInput" min="20" max="200" step="10" value="100" aria-label="监控时间输入框">
+          <div class="detail">监控时间：<strong id="advIntervalValue">100</strong> ms · 默认 100，可调范围 20–200 · 时间越短，功率曲线越平滑</div>
+        </div>
+        <div class="setting-divider" role="separator" aria-hidden="true"></div>
+        <div class="limit-control">
+          <div class="name">提升步进（mA）</div>
+          <input type="range" id="advRaiseRange" min="10" max="500" step="10" value="100" aria-label="提升步进滑动条">
+          <input type="number" id="advRaiseInput" min="10" max="500" step="10" value="100" aria-label="提升步进输入框">
+          <div class="detail">提升步进：<strong id="advRaiseValue">100</strong> mA · 默认 100，可调范围 10–500 · 步进越低，功率上升越慢，但是功率曲线更平滑</div>
+        </div>
+        <div class="setting-divider" role="separator" aria-hidden="true"></div>
+        <div class="limit-control">
+          <div class="name">降低步进（mA）</div>
+          <input type="range" id="advLowerRange" min="100" max="1000" step="10" value="500" aria-label="降低步进滑动条">
+          <input type="number" id="advLowerInput" min="100" max="1000" step="10" value="500" aria-label="降低步进输入框">
+          <div class="detail">降低步进：<strong id="advLowerValue">500</strong> mA · 默认 500，可调范围 100–1000 · 步进越低，功率下降越慢，曲线更平滑，但是可能导致电池电压过高，触发强制协议降级，功率直接降为 0</div>
+        </div>
+        <div class="setting-divider" role="separator" aria-hidden="true"></div>
+        <div class="limit-control">
+          <div class="name">升流截止压差（mV）</div>
+          <input type="range" id="advGapRange" min="-100" max="0" step="10" value="-50" aria-label="升流截止压差滑动条">
+          <input type="number" id="advGapInput" min="-100" max="0" step="10" value="-50" aria-label="升流截止压差输入框">
+          <div class="detail">升流截止压差：<strong id="advGapValue">-50</strong> mV · 默认 -50，可调范围 -100–0 · 电池电压达到「设定电压 + 截止压差」时停止升流。数值越低，充电功率越稳定，但是会降低功率上限</div>
+        </div>
+        <button type="button" id="advReset" class="button">恢复默认</button>
+      </div>
+    </section>
+    </section>
+
+    <section id="page-overview" class="tab-page" role="tabpanel" aria-labelledby="tab-overview">
+      <div class="protocol-hero">
+        <div class="eyebrow">当前充电协议</div>
+        <div class="protocol-head"><strong id="protocolName">正在识别…</strong><span id="protocolBadge" class="protocol-badge">只读检测</span></div>
+        <p id="protocolReason" class="protocol-reason">正在读取 OPLUS 与 USB 协议状态。</p>
+        <p id="protocolSource" class="detail">检测来源：—</p>
+      </div>
+      <div class="section-head"><h2>充电器协商与限流排查</h2><small id="negUpdated">只读 · 等待读取</small></div>
+      <section class="status-panel" aria-label="USB 输入协商和模块投票目标">
+        <p id="negState" class="detail" role="status">正在检查 USB 输入状态…</p>
+        <div class="metric-grid">
+          <div class="metric"><div class="name">实时 USB 输入电压</div><div id="negVoltage" class="value">—</div></div>
+          <div class="metric"><div class="name">USB 报告电压上限</div><div id="negVoltageMax" class="value">—</div></div>
+          <div class="metric"><div class="name">USB 输入策略限额</div><div id="negInputLimit" class="value">—</div></div>
+          <div class="metric"><div class="name">模块当前投票目标</div><div id="negTarget" class="value">—</div></div>
+        </div>
+        <button class="button" id="negRefresh" type="button">刷新协商信息</button>
+      </section>
+      <div class="section-head"><h2>协议识别</h2><small>只读 · 不触发协议切换</small></div>
+      <section class="status-panel" aria-label="充电协议状态">
+        <div id="protocolList" class="protocol-list" aria-live="polite">正在读取协议状态…</div>
+        <p class="vote-note">状态来自驱动只读接口，不代表适配器认证成功。VOOC 与 SUPERVOOC 可能无法区分；USB 基础类型无法排除私有快充。</p>
+        <pre id="protocolEvidence" class="raw">等待驱动状态…</pre>
+      </section>
+    <div class="section-head"><h2>运行概况</h2><small id="updated">尚未刷新</small></div>
+    <section class="status-panel" aria-label="模块当前状态">
+      <div class="status-main">
+        <div><div class="state-name"><span class="state-dot" id="stateDot"></span><span id="stateName">读取中…</span></div>
+          <div class="detail" id="stateDetail">正在查询本模块控制状态</div></div>
+        <div class="state-meta">控制阶段<strong id="phaseValue">—</strong></div>
+      </div>
+      <div class="metric-grid">
+        <div class="metric"><div class="name">电池温度</div><div id="tempState" class="value">—</div></div>
+        <div class="metric"><div class="name">电池电压（系统读数）</div><div id="voltageState" class="value">—</div></div>
+        <div class="metric"><div class="name">电源状态</div><div id="powerState" class="value">—</div></div>
+      </div>
+    </section>
+
+    </section>
+
+    <section id="page-diagnostics" class="tab-page" role="tabpanel" aria-labelledby="tab-diagnostics" hidden>
+    <div class="section-head"><h2>当前充电协议诊断</h2><small>自动识别 · 只读</small></div>
+    <section class="status-panel" aria-label="当前充电协议和相关驱动投票">
+      <div class="protocol-head"><strong id="diagCurrentProtocol">正在识别…</strong><span id="diagProtocolConfidence" class="protocol-badge">读取中</span></div>
+      <p id="diagProtocolReason" class="protocol-reason">正在读取手机协议状态。</p>
+      <p id="diagProtocolSource" class="detail">检测来源：—</p>
+      <div class="metric-grid">
+        <div class="metric"><div class="name">对应电流投票节点</div><div id="diagPrimaryName" class="value">—</div></div>
+        <div class="metric"><div class="name">普通有效投票（原始值）</div><div id="diagEffective" class="value">—</div></div>
+        <div class="metric"><div class="name">对应节点 force_active</div><div id="diagForceActive" class="value">—</div></div>
+        <div class="metric"><div class="name">对应节点 force_val（保存值）</div><div id="diagForceVal" class="value">—</div></div>
+        <div class="metric"><div class="name">电池电流（节点原始值）</div><div id="diagBatteryCurrent" class="value">—</div></div>
+        <div class="metric"><div class="name">外部供电状态</div><div id="diagPower" class="value">—</div></div>
+      </div>
+      <p id="diagProtocolHint" class="vote-note">仅显示与识别结果对应的投票，不会把其他协议的残留投票当作当前数据。</p>
+      <div id="diagRelatedVotes" class="vote-list" aria-live="polite"><p class="detail">当前协议投票将从快速只读快照显示。</p></div>
+      <p id="diagSnapshot" class="detail">快速快照更新后显示；完整目录按需读取。</p>
+      <div class="controls" style="margin-top:14px">
+        <button class="button" id="copyDiagnostics" type="button">复制当前协议诊断</button>
+      </div>
+      <p class="vote-note">协议识别可能受厂商节点支持情况影响。所有投票均为原始驱动值，不能视为实测充电电流；force_active=0 时 force_val 可能是残留值。</p>
+    </section>
+
+    <div class="section-head"><h2>全部 Votable 投票</h2><small>驱动只读快照</small></div>
+    <section class="status-panel" aria-label="全部 OPLUS Votable 投票目录">
+      <p class="detail">完整扫描耗时较长，仅在点击「读取全部目录」时执行，不再随页面切换和自动刷新扫描。点击目录查看投票者、普通有效值与强制状态。</p>
+      <div class="votable-toolbar">
+        <select id="votableCategory" class="select" aria-label="投票类别">
+          <option value="all">全部类别</option>
+          <option value="wired">基础与有线充电</option>
+          <option value="ufcs">UFCS</option>
+          <option value="pps">PPS</option>
+          <option value="vooc">VOOC</option>
+          <option value="wireless">无线充电</option>
+          <option value="other">其他</option>
+        </select>
+        <input type="search" id="votableSearch" class="search" placeholder="搜索目录或投票者" aria-label="搜索投票目录和投票者">
+        <button class="button primary" id="votableRefresh" type="button">读取全部目录</button>
+      </div>
+      <p class="votable-summary" id="votableSummary" role="status">未读取完整目录。需要时点击按钮，加载过程不阻塞页面切换。</p>
+      <div id="votableGroups" class="votable-groups" aria-live="polite"></div>
+      <p class="vote-note">所有数值均为驱动原始值，单位视目录而定。-22、none 等可能是无投票哨兵值。force_val 是保存值，只有 force_active=1 时才表示强制开关打开，仍不代表实际充电电流。</p>
+    </section>
+    <div class="section-head"><h2>UFCS 专项投票</h2><small>仅 UFCS，非当前协议时可能是残留值</small></div>
+    <section class="status-panel" aria-label="UFCS 当前投票值">
+      <div class="vote-overview">
+        <span>当前有效值</span>
+        <strong id="voteEffective">—</strong>
+        <span class="detail" id="voteEffectiveInfo">等待读取…</span>
+      </div>
+      <div id="voteList" class="vote-list" aria-live="polite">
+        <div class="detail">读取投票项中…</div>
+      </div>
+      <div class="vote-note" id="voteNote">UFCS 接管期间，本模块以 force 覆盖有效投票值来限制电流；表中数值为驱动原始 mA，并非实际电池电流，未启用的投票不参与普通 Min 计算。</div>
+    </section>
+
+    <details class="status-panel" aria-label="UFCS 专用内核历史日志">
+      <summary>UFCS 内核历史请求（仅 UFCS，点击展开）</summary>
+      <p class="vote-note">下方是 UFCS 专项日志，可能是历史请求；不随当前协议自动切换，也不代表当前实际电流。</p>
+      <div class="controls" style="margin-top:14px">
+        <button class="button primary" id="kernelRead" type="button">读取内核 UFCS 日志</button>
+        <small class="detail" id="kernelUpdated">仅按需读取内核历史记录</small>
+      </div>
+      <div class="vote-overview">
+        <span>最近一次 UFCS 驱动成功请求</span>
+        <strong id="kernelRequest">—</strong>
+        <span class="detail" id="kernelRequestAge">尚未读取</span>
+      </div>
+      <p class="vote-note">ibus_ma/vbus_mv 是内核历史记录的适配器请求值，<strong>不是实测电流或功率</strong>。</p>
+      <pre class="raw" id="kernelEvents" style="min-height:60px" aria-live="polite">点击「读取内核 UFCS 日志」查看最近事件。</pre>
+    </details>
+
+    </section>
+
+    <section id="page-logs" class="tab-page" role="tabpanel" aria-labelledby="tab-logs" hidden>
+    <div class="section-head"><h2>oplus-votable 控制日志</h2><small>最近最多 200 条</small></div>
+    <div class="controls">
+      <select id="source" class="select" aria-label="日志文件">
+        <option value="latest">当前日志</option>
+        <option value="previous">上一个日志</option>
+      </select>
+      <select id="filter" class="select" aria-label="日志类型">
+        <option value="all">全部事件</option>
+        <option value="warnings">仅异常</option>
+      </select>
+      <input type="search" id="search" class="search" placeholder="搜索状态、日志内容" aria-label="搜索日志">
+      <button class="button primary" id="refresh" type="button">刷新</button>
+      <button class="button" id="copy" type="button">复制日志</button>
+      <label class="auto"><input id="autoRefresh" type="checkbox" checked> 自动刷新</label>
+    </div>
+    <section class="log-pane" aria-label="日志列表">
+      <div class="log-header"><span id="count">0 条记录</span><span id="fileSize">—</span></div>
+      <div class="log-list" id="entries"><div class="empty">正在读取日志…</div></div>
+    </section>
+    <p class="footer">本模块仅在 UFCS / PPS 协议下控制投票值；VOOC 只读识别。内核请求不等于实测电流；温度限制仍未启用。</p>
+    </section>
+  </main>
+  <nav id="bottomNav" class="bottom-nav" aria-label="底部页面导航">
+    <div class="bottom-nav-inner" role="tablist" aria-label="功能页面">
+      <button type="button" id="tab-overview" class="nav-tab" role="tab" aria-controls="page-overview" aria-selected="true" data-page="overview">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5V21h-7v-7h-4v7H3z"/></svg><span>概览</span>
+      </button>
+      <button type="button" id="tab-control" class="nav-tab" role="tab" aria-controls="page-control" aria-selected="false" data-page="control" tabindex="-1">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m13 2-9 12h7l-1 8 10-13h-7z"/></svg><span>控制</span>
+      </button>
+      <button type="button" id="tab-diagnostics" class="nav-tab" role="tab" aria-controls="page-diagnostics" aria-selected="false" data-page="diagnostics" tabindex="-1">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 18v-6m5 6V6m5 12v-9m5 9V4M2 21h20"/></svg><span>诊断</span>
+      </button>
+      <button type="button" id="tab-logs" class="nav-tab" role="tab" aria-controls="page-logs" aria-selected="false" data-page="logs" tabindex="-1">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12v18H6zM9 8h6M9 12h6M9 16h4"/></svg><span>日志</span>
+      </button>
+    </div>
+  </nav>
+</body>
+</html>
