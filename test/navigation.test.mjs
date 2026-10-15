@@ -38,7 +38,7 @@ function openWebUi(settings={},onSet,onCommand) {
     const id=/id="([^"]+)"/.exec(tag)?.[1];
     if (id) map.get(id).value=/value="([^"]*)"/.exec(tag)?.[1] || '';
   }
-  const entries=['UFCS','PPS','advanced'].map(id=>{
+  const entries=['UFCS','PPS','advanced','thermal'].map(id=>{
     const n=mockElement();n.dataset.detail=id;return n;
   });
   const backs=entries.map(()=>mockElement());
@@ -66,10 +66,11 @@ function openWebUi(settings={},onSet,onCommand) {
       const response=await onCommand?.(cmd);
       if(response !== undefined) return response;
       if(cmd.includes('--votables')) {scans++;return 'VOTABLES_UNAVAILABLE';}
-      const setter=/--(vote-initial|interval|raise-step|lower-step|cutoff-gap)-set (-?\d+)$/.exec(cmd);
+      const setter=/--(vote-initial|interval|raise-step|lower-step|cutoff-gap|thermal-limit|thermal-vote|thermal-gap)-set (-?\d+)$/.exec(cmd);
       if(setter) {
         const keys={'vote-initial':'VOTE_INITIAL',interval:'INTERVAL_MS',
-          'raise-step':'RAISE_STEP','lower-step':'LOWER_STEP','cutoff-gap':'CUTOFF_GAP_MV'};
+          'raise-step':'RAISE_STEP','lower-step':'LOWER_STEP','cutoff-gap':'CUTOFF_GAP_MV',
+          'thermal-limit':'THERMAL_LIMIT_C','thermal-vote':'THERMAL_VOTE_MA','thermal-gap':'THERMAL_GAP_C'};
         writes++;
         await onSet?.(setter[1],setter[2]);
         settings[keys[setter[1]]]=setter[2];
@@ -84,6 +85,15 @@ function openWebUi(settings={},onSet,onCommand) {
         return key+'='+protoSetter[3];
       }
       if(/--(monitor-enable|monitor-disable)/.test(cmd)) writes++;
+      if(/--thermal-(enable|disable)$/.test(cmd)) {
+        writes++;
+        settings.THERMAL_ENABLED=cmd.endsWith('--thermal-enable')?'YES':'NO';
+        return 'THERMAL_ENABLED='+settings.THERMAL_ENABLED;
+      }
+      const thermalStatus=['THERMAL_ENABLED=NO','THERMAL_LIMIT_C=45','THERMAL_VOTE_MA=1000',
+        'THERMAL_GAP_C=2','THERMAL_TEMP_DECI=340','THERMAL_STATE=OFF','THERMAL_ACTIVE=NO',
+        ...Object.entries(settings).map(([key,value])=>key+'='+value)].join(';');
+      if(cmd.endsWith('--thermal-status')) return thermalStatus;
       if(cmd.endsWith('--status')&&cmd.includes('charge-test.sh')) return [
         'CONTROL_STATE=STOPPED','PHASE=IDLE','REASON=WAITING_PROTOCOL',
         'MONITOR_ENABLED=YES','ACTIVE_PROTOCOL=NONE','ONLINE_PROTOCOL=NONE',
@@ -91,6 +101,7 @@ function openWebUi(settings={},onSet,onCommand) {
         'PPS_ENABLED=YES','PPS_LIMIT_MV=4500','PPS_VOTE_MAX=5000',
         'VOTE_INITIAL=1000','INTERVAL_MS=100','RAISE_STEP=100',
         'LOWER_STEP=500','CUTOFF_GAP_MV=-50',
+        thermalStatus,
         ...Object.entries(settings).map(([key,value])=>key+'='+value),
       ].join(';');
       if(cmd.includes('--protocol')) return 'UFCS=0;VOOC=0;PPS=0;USB_ONLINE=0;POWER=NO';
@@ -113,6 +124,91 @@ function openWebUi(settings={},onSet,onCommand) {
     get writes(){return writes;},get scans(){return scans;}};
 }
 
+test('温控开关和三组滑条输入保存回读，边界生效，重开保留',async ()=>{
+  const settings={};
+  const ui=openWebUi(settings);
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(ui.el('thermalSwitch').checked,false);
+  for(const [id,value] of [['thermalLimit','45'],['thermalVote','1000'],['thermalGap','2']]) {
+    assert.equal(ui.el(id+'Range').value,value);
+    assert.equal(ui.el(id+'Input').value,value);
+  }
+  for(const [id,value] of [['thermalVote','499'],['thermalVote','5001'],['thermalGap','0'],['thermalGap','6'],['thermalLimit','60.5']]) {
+    ui.el(id+'Input').value=value;
+    await ui.el(id+'Input').emit('change');
+  }
+  assert.equal(ui.writes,0,'非法输入不得写入后台');
+  for(const [id,value] of [['thermalLimit','60'],['thermalVote','500'],['thermalGap','5']]) {
+    ui.el(id+'Range').value=value;
+    ui.el(id+'Range').emit('input');
+    assert.equal(ui.el(id+'Input').value,value);
+    await ui.el(id+'Range').emit('change');
+    assert.match(ui.el('thermalSaveStatus').textContent,/已保存并回读确认/);
+  }
+  ui.el('thermalVoteInput').value='5000';
+  ui.el('thermalVoteInput').emit('input');
+  assert.equal(ui.el('thermalVoteRange').value,'5000');
+  await ui.el('thermalVoteInput').emit('change');
+  ui.el('thermalSwitch').checked=true;
+  await ui.el('thermalSwitch').emit('change');
+  const reopened=openWebUi(settings);
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(reopened.el('thermalSwitch').checked,true);
+  assert.equal(reopened.el('thermalLimitInput').value,'60');
+  assert.equal(reopened.el('thermalVoteInput').value,'5000');
+  assert.equal(reopened.el('thermalGapInput').value,'5');
+});
+
+test('温度页每秒独立刷新温度和状态，保留正在编辑的值，后台或离页后停止刷新',async ()=>{
+  const settings={THERMAL_ENABLED:'YES',THERMAL_STATE:'LIMITED',THERMAL_ACTIVE:'YES',THERMAL_TEMP_DECI:'450'};
+  let reads=0, fail=false;
+  const ui=openWebUi(settings,undefined,cmd=>{
+    if(cmd.endsWith('--thermal-status')) { reads++; if(fail) throw new Error('读取失败'); }
+  });
+  await new Promise(resolve=>setImmediate(resolve));
+  const tick=ui.timers.find(item=>item.ms===1000).fn;
+  await tick(); assert.equal(reads,0);
+  ui.el('tab-control').emit('click');
+  ui.entries.find(item=>item.dataset.detail==='thermal').emit('click');
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(ui.el('thermalTemp').textContent,'45.0°C');
+  assert.match(ui.el('thermalStatus').textContent,/43°C/);
+  settings.THERMAL_TEMP_DECI='429'; settings.THERMAL_STATE='NORMAL';
+  ui.doc.activeElement=ui.el('thermalGapInput'); ui.el('thermalGapInput').value='5';
+  await tick();
+  assert.equal(ui.el('thermalTemp').textContent,'42.9°C');
+  assert.equal(ui.el('thermalGapInput').value,'5','轮询不能覆盖正在输入的草稿');
+  ui.doc.activeElement=null;
+  fail=true; await tick();
+  assert.equal(ui.el('thermalTemp').textContent,'—');
+  assert.match(ui.el('thermalStatus').textContent,/读取失败/);
+  const before=reads;
+  ui.doc.hidden=true; await tick(); assert.equal(reads,before);
+  ui.doc.hidden=false; ui.el('tab-overview').emit('click'); await tick(); assert.equal(reads,before);
+});
+
+test('温控保存期间禁止并发修改，失败时恢复实际值且不显示成功',async ()=>{
+  let release;
+  const pending=new Promise(resolve=>{release=resolve;});
+  const ui=openWebUi({},field=>field==='thermal-vote'?pending:undefined);
+  await new Promise(resolve=>setImmediate(resolve));
+  ui.el('thermalVoteInput').value='500';
+  const saving=ui.el('thermalVoteInput').emit('change');
+  assert.equal(ui.el('thermalSwitch').disabled,true);
+  assert.equal(ui.el('thermalGapRange').disabled,true);
+  ui.el('thermalGapInput').value='5'; await ui.el('thermalGapInput').emit('change');
+  assert.equal(ui.writes,1);
+  release(); await saving;
+  assert.equal(ui.el('thermalVoteInput').value,'500');
+  assert.equal(ui.el('thermalSwitch').disabled,false);
+  const failed=openWebUi({},()=>{throw new Error('存储不可写');});
+  await new Promise(resolve=>setImmediate(resolve));
+  failed.el('thermalVoteInput').value='500'; await failed.el('thermalVoteInput').emit('change');
+  assert.match(failed.el('thermalSaveStatus').textContent,/失败.*存储不可写/);
+  assert.equal(failed.el('thermalVoteInput').value,'1000');
+  assert.equal(failed.el('thermalVoteInput').disabled,false);
+});
+
 test('Tab 和控制设置直接原位切换，浏览器返回不产生中间记录', async ()=>{
   const ui=openWebUi();
   const {el,entries,backs,location,initialUrl}=ui;
@@ -126,7 +222,7 @@ test('Tab 和控制设置直接原位切换，浏览器返回不产生中间记�
     entries[i].emit('click');
     assert.equal(el('control-index').hidden,true);
     assert.equal(el('bottomNav').hidden,true);
-    for(const id of ['UFCS','PPS','advanced']) {
+    for(const id of ['UFCS','PPS','advanced','thermal']) {
       assert.equal(el('control-detail-'+id).hidden,id!==entries[i].dataset.detail);
     }
     backs[i].emit('click');

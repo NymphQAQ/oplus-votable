@@ -18,7 +18,7 @@ const expected = [
   'webroot/index.html','webroot/app.js','webroot/log-utils.js',
   'webroot/log-reader.sh',
 ];
-const output = join(root, 'dist', 'oplus-votable-0.8.8-protocol-defaults.zip');
+const output = join(root, 'dist', 'oplus-votable-0.8.9-thermal-control.zip');
 try {
   mkdirSync(join(stage, 'package'));
   for (const name of expected) {

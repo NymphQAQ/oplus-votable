@@ -17,6 +17,7 @@
     controlStatus: 'sh ' + CONTROL + ' --status',
     monitorEnable: 'sh ' + CONTROL + ' --monitor-enable',
     monitorDisable: 'sh ' + CONTROL + ' --monitor-disable',
+    thermalStatus: 'sh ' + CONTROL + ' --thermal-status',
   });
   const el = id => document.getElementById(id);
 
@@ -59,6 +60,15 @@
     lowerStep: {min: 100, max: 1000, el: 'advLower', set: '--lower-step-set', key: 'LOWER_STEP'},
     cutoffGapMv: {min: -100, max: 0, el: 'advGap', set: '--cutoff-gap-set', key: 'CUTOFF_GAP_MV'},
   });
+  const THERMAL = Object.freeze({
+    limit: {min: 20, max: 60, el: 'thermalLimit', set: '--thermal-limit-set', key: 'THERMAL_LIMIT_C'},
+    vote: {min: 500, max: 5000, el: 'thermalVote', set: '--thermal-vote-set', key: 'THERMAL_VOTE_MA'},
+    gap: {min: 1, max: 5, el: 'thermalGap', set: '--thermal-gap-set', key: 'THERMAL_GAP_C'},
+  });
+  const thermal = {enabled: false, limit: 45, vote: 1000, gap: 2, temp: null, state: 'UNKNOWN', active: false};
+  let thermalBusy = false;
+  let thermalReadBusy = false;
+  let thermalRevision = 0;
   const LIMIT_MIN = 3800;
   const LIMIT_MAX = 4560;
   const VOTE_MAX_MIN = 1000;
@@ -450,6 +460,99 @@
     }
   }
 
+  function paintThermal() {
+    el('thermalSwitch').checked = thermal.enabled;
+    el('thermalSwitch').disabled = thermalBusy;
+    el('thermalEnabled').textContent = thermal.enabled ? '已开启' : '已关闭';
+    el('thermalTag').textContent = thermal.enabled ? '已开启' : '已关闭';
+    setMetric('thermalTemp', thermal.temp === null ? '—' : (thermal.temp / 10).toFixed(1) + '°C');
+    const states = {
+      OFF: '温度控制已关闭。',
+      IDLE: '温度控制已开启，等待自动监测及 UFCS / PPS 接管。',
+      NORMAL: '温度正常，按原有规则调节投票。',
+      LIMITED: '已触发温度限制，降至 ' + (thermal.limit - thermal.gap) + '°C 及以下后解除。',
+      SENSOR_ERROR: '读温失败，按 ' + Math.min(1000, thermal.vote) + ' mA 上限限制投票。',
+      UNKNOWN: '温度控制状态读取失败，请刷新重试。',
+    };
+    el('thermalStatus').textContent = (states[thermal.state] || states.UNKNOWN) +
+      (thermal.enabled && !thermal.active && !['IDLE','UNKNOWN'].includes(thermal.state) ? ' 当前未接管充电协议。' : '');
+    el('thermalStatus').className = thermal.state === 'SENSOR_ERROR' || thermal.state === 'UNKNOWN'
+      ? 'detail danger-text' : thermal.state === 'LIMITED' ? 'detail warn-text' : 'detail';
+    for (const [field, meta] of Object.entries(THERMAL)) {
+      const range = el(meta.el + 'Range');
+      const input = el(meta.el + 'Input');
+      range.disabled = thermalBusy;
+      input.disabled = thermalBusy;
+      if (thermalBusy || document.activeElement === input || document.activeElement === range) continue;
+      range.value = input.value = String(thermal[field]);
+      el(meta.el + 'Value').textContent = String(thermal[field]);
+    }
+  }
+
+  function applyThermalStatus(data) {
+    if (!['YES','NO'].includes(data.THERMAL_ENABLED)) throw new Error('温度控制响应无法识别');
+    thermal.enabled = data.THERMAL_ENABLED === 'YES';
+    for (const [field, meta] of Object.entries(THERMAL)) {
+      const n = Number(data[meta.key]);
+      if (!Number.isInteger(n) || n < meta.min || n > meta.max) throw new Error('温控参数响应无效');
+      thermal[field] = n;
+    }
+    const t = /^-?\d+$/.test(data.THERMAL_TEMP_DECI || '') ? Number(data.THERMAL_TEMP_DECI) : NaN;
+    thermal.temp = Number.isFinite(t) && t >= -500 && t <= 1500 ? t : null;
+    thermal.state = data.THERMAL_STATE || 'UNKNOWN';
+    thermal.active = data.THERMAL_ACTIVE === 'YES';
+    paintThermal();
+  }
+
+  async function refreshThermal() {
+    if (thermalReadBusy || thermalBusy) return;
+    thermalReadBusy = true;
+    const revision = thermalRevision;
+    try {
+      const data = L.parseStatus(await run('thermalStatus'));
+      if (revision === thermalRevision && !thermalBusy) applyThermalStatus(data);
+    } catch (error) {
+      if (revision === thermalRevision && !thermalBusy) {
+        thermal.temp = null;
+        thermal.state = 'UNKNOWN';
+        paintThermal();
+      }
+    } finally { thermalReadBusy = false; }
+  }
+
+  async function runThermal(field, raw) {
+    if (thermalBusy) return;
+    const meta = THERMAL[field];
+    if (field !== 'enabled' && (!/^\d+$/.test(String(raw)) || Number(raw) < meta.min || Number(raw) > meta.max)) {
+      el('thermalSaveStatus').textContent = '请输入 ' + meta.min + '–' + meta.max + ' 范围内的整数。';
+      paintThermal();
+      return;
+    }
+    const value = field === 'enabled' ? Boolean(raw) : Number(raw);
+    thermalBusy = true;
+    thermalRevision++;
+    paintThermal();
+    el('thermalSaveStatus').textContent = '正在保存…';
+    try {
+      await execControl(field === 'enabled' ? (value ? '--thermal-enable' : '--thermal-disable') : meta.set + ' ' + value);
+      const saved = L.parseStatus(await run('thermalStatus'));
+      if ((field === 'enabled' ? saved.THERMAL_ENABLED === (value ? 'YES' : 'NO') : saved[meta.key] === String(value)) !== true) {
+        throw new Error('回读值不一致');
+      }
+      applyThermalStatus(saved);
+      el('thermalSaveStatus').textContent = '✓ 已保存并回读确认，重启后保留。';
+      showError('');
+    } catch (error) {
+      const message = '温控设置保存或回读失败：' + String(error?.message || error);
+      el('thermalSaveStatus').textContent = message;
+      showError(message);
+    } finally {
+      thermalBusy = false;
+      await refreshThermal();
+      paintThermal();
+    }
+  }
+
   let votableRows = [];
   let votableLoadedAt = 0;
   let votableBusy = false;
@@ -794,6 +897,8 @@
   const reasons = {
     STARTED: '已检测到在线协议并自动接管。',
     ADJUSTED: '正在按电压自适应调整。',
+    THERMAL_LIMITED: '已触发温度限流，等待降温。',
+    THERMAL_SENSOR_ERROR: '电池温度读取失败，正在限制投票目标。',
     WAITING_PROTOCOL: '监测中：等待 UFCS / PPS 接入。',
     PROTOCOL_DISABLED: '检测到在线协议，但该协议开关已关闭，未接管。',
     UNSUPPORTED_PROTOCOL: '当前为 VOOC / SUPERVOOC，仅提供只读诊断，不进行电流控制。',
@@ -815,6 +920,7 @@
     el('monitorState').textContent = monitorEnabled ? '已开启' : '已关闭';
     for (const {id} of PROTOS) paintProto(id);
     for (const field of Object.keys(ADV)) if (!advBusy[field]) paintAdv(field);
+    paintThermal();
     el('controlLease').textContent = controlState === 'RUNNING'
       ? '已确认本模块控制进程及 ' +
         (PROTO_LABEL[activeProtocol.toLowerCase()] || activeProtocol) + ' 驱动强制状态'
@@ -828,6 +934,7 @@
   }
 
   async function refreshControl() {
+    const revision = thermalRevision;
     const data = L.parseStatus(await run('controlStatus'));
     if (!Object.prototype.hasOwnProperty.call(controlNames, data.CONTROL_STATE)) {
       throw new Error('控制状态响应无法识别');
@@ -854,6 +961,7 @@
       const n = Number(data[meta.key]);
       if (Number.isFinite(n) && n >= meta.min && n <= meta.max) advState[field] = n;
     }
+    if (data.THERMAL_ENABLED && revision === thermalRevision && !thermalBusy) applyThermalStatus(data);
     paintControl();
   }
 
@@ -1071,7 +1179,7 @@
   // 只改变当前 WebUI 的可见内容，不修改 URL/Hash 或 pushState。
   // 这样底部 Tab 与子页面切换均不堆叠历史，系统返回一次即可退出 WebUI。
   const PAGES = ['overview', 'control', 'diagnostics', 'logs'];
-  const CONTROL_DETAILS = ['UFCS', 'PPS', 'advanced'];
+  const CONTROL_DETAILS = ['UFCS', 'PPS', 'advanced', 'thermal'];
   function showControlDetail(detail) {
     controlDetail = CONTROL_DETAILS.includes(detail) ? detail : null;
     el('control-index').hidden = controlDetail !== null;
@@ -1079,6 +1187,7 @@
       el('control-detail-' + id).hidden = controlDetail !== id;
     }
     el('bottomNav').hidden = controlDetail !== null;
+    if (controlDetail === 'thermal') refreshThermal();
     window.scrollTo(0, 0);
   }
   function switchPage(page) {
@@ -1130,6 +1239,21 @@
   el('copyDiagnostics').addEventListener('click', copyDiagnostics);
   el('monitorSwitch').addEventListener('change', toggleMonitor);
   el('advReset').addEventListener('click', resetAdv);
+  el('thermalSwitch').addEventListener('change', () => runThermal('enabled', el('thermalSwitch').checked));
+  for (const [field, meta] of Object.entries(THERMAL)) {
+    el(meta.el + 'Range').addEventListener('input', () => {
+      el(meta.el + 'Input').value = el(meta.el + 'Range').value;
+      el(meta.el + 'Value').textContent = el(meta.el + 'Range').value;
+    });
+    el(meta.el + 'Input').addEventListener('input', () => {
+      const raw = el(meta.el + 'Input').value.trim();
+      if (!/^\d+$/.test(raw) || Number(raw) < meta.min || Number(raw) > meta.max) return;
+      el(meta.el + 'Range').value = raw;
+      el(meta.el + 'Value').textContent = raw;
+    });
+    el(meta.el + 'Range').addEventListener('change', () => runThermal(field, el(meta.el + 'Range').value));
+    el(meta.el + 'Input').addEventListener('change', () => runThermal(field, el(meta.el + 'Input').value.trim()));
+  }
   for (const {id, key} of PROTOS) {
     el('protoReset' + key).addEventListener('click', () => resetProto(id));
     el('protoSwitch' + key).addEventListener('change', () => toggleProto(id));
@@ -1185,6 +1309,9 @@
   setInterval(() => {
     if (el('autoRefresh').checked && !document.hidden) refresh();
   }, 6000);
+  setInterval(() => {
+    if (currentPage === 'control' && controlDetail === 'thermal' && !document.hidden) return refreshThermal();
+  }, 1000);
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden && el('autoRefresh').checked) refresh();
   });

@@ -9,7 +9,7 @@
 # UFCS 投票上限默认 9000 / 最高 13500；PPS 默认 5000 / 最高 5800。
 # 高级参数（投票初始值、监控时间、提升/降低步进、升流截止压差）全局共用。
 # 协议不再在线、对应开关关闭或监测关闭时立即撤销限流并入日志。
-# 温度限制当前未启用；不输出任意用户电流。
+# 温控读取真实电池温度，超温或读温失败时限流，降温后按恢复温差解除。
 set -u
 umask 077
 D='/data/adb/oplus-votable'
@@ -23,6 +23,17 @@ IVLF="$D/auto-control.interval-ms"
 RSTEPF="$D/auto-control.raise-step"
 LSTEPF="$D/auto-control.lower-step"
 GAPF="$D/auto-control.cutoff-gap-mv"
+TENF="$D/auto-control.thermal-enabled"
+TLIMF="$D/auto-control.thermal-limit-c"
+TVOTEF="$D/auto-control.thermal-vote-ma"
+TGAPF="$D/auto-control.thermal-gap-c"
+DEFAULT_THERMAL_LIMIT=45
+DEFAULT_THERMAL_VOTE=1000
+DEFAULT_THERMAL_GAP=2
+thermal_state=OFF
+thermal_held=0
+thermal_sample_at=-1
+thermal_temp=''
 VOTE_MIN=1000
 DEFAULT_INITIAL=1000
 INITIAL_MIN=1000
@@ -159,6 +170,74 @@ interval_ms() { file_num "$IVLF" "$DEFAULT_INTERVAL" "$INTERVAL_MIN" "$INTERVAL_
 raise_step() { file_num "$RSTEPF" "$DEFAULT_RAISE_STEP" "$RAISE_STEP_MIN" "$RAISE_STEP_MAX"; }
 lower_step() { file_num "$LSTEPF" "$DEFAULT_LOWER_STEP" "$LOWER_STEP_MIN" "$LOWER_STEP_MAX"; }
 cutoff_gap() { file_snum "$GAPF" "$DEFAULT_GAP" "$GAP_MIN" "$GAP_MAX"; }
+thermal_on() { [ "$(cat "$TENF" 2>/dev/null)" = on ]; }
+thermal_setting() {
+  value="$(file_num "$@")"
+  # 去掉历史文件中的前导零，避免 Shell 算术将其当作八进制。
+  while [ "${value#0}" != "$value" ]; do value="${value#0}"; done
+  printf '%s' "$value"
+}
+thermal_limit() { thermal_setting "$TLIMF" "$DEFAULT_THERMAL_LIMIT" 20 60; }
+thermal_vote() { thermal_setting "$TVOTEF" "$DEFAULT_THERMAL_VOTE" 500 5000; }
+thermal_gap() { thermal_setting "$TGAPF" "$DEFAULT_THERMAL_GAP" 1 5; }
+temperature_now() {
+  temperature="$(cat /sys/class/power_supply/battery/temp 2>/dev/null)" || return 1
+  snum "$temperature" && [ "$temperature" -ge -500 ] && [ "$temperature" -le 1500 ] || return 1
+  printf '%s' "$temperature"
+}
+thermal_update() {
+  previous_thermal="$thermal_state"
+  if ! thermal_on; then
+    thermal_state=OFF
+    thermal_held=0
+    thermal_sample_at=-1
+  else
+    sample_now="$(uptime_s)"
+    if ! num "$sample_now" || [ "$thermal_sample_at" != "$sample_now" ]; then
+      thermal_temp="$(temperature_now)" || thermal_temp=''
+      thermal_sample_at="$sample_now"
+    fi
+    tlimit="$(thermal_limit)"
+    tgap="$(thermal_gap)"
+    if ! snum "$thermal_temp"; then
+      thermal_state=SENSOR_ERROR
+      thermal_held=1
+    else
+      if [ "$thermal_temp" -ge "$((tlimit * 10))" ]; then
+        thermal_held=1
+      elif [ "$thermal_temp" -le "$(((tlimit - tgap) * 10))" ]; then
+        thermal_held=0
+      fi
+      thermal_state=NORMAL
+      [ "$thermal_held" -eq 0 ] || thermal_state=LIMITED
+    fi
+  fi
+  if [ "$thermal_state" != "$previous_thermal" ]; then log "THERMAL_$thermal_state"; fi
+}
+thermal_clamp() {
+  [ "$thermal_held" -eq 1 ] || return 0
+  thermal_cap="$(thermal_vote)"
+  # 读温失败时不得因测试限流值较高而放宽到 1000mA 以上。
+  if [ "$thermal_state" = SENSOR_ERROR ] && [ "$thermal_cap" -gt 1000 ]; then thermal_cap=1000; fi
+  [ "$target" -le "$thermal_cap" ] || target="$thermal_cap"
+}
+thermal_status() {
+  ten=NO; thermal_on && ten=YES
+  ts=OFF
+  if [ "$ten" = YES ]; then
+    ts=IDLE
+    if monitor_on && daemon_running; then
+      case "$(live_get "$LIVE" THERMAL_STATE)" in
+        NORMAL) ts=NORMAL;; LIMITED) ts=LIMITED;; SENSOR_ERROR) ts=SENSOR_ERROR;;
+      esac
+    fi
+  fi
+  ta=NO
+  if [ "$ten" = YES ] && [ "$(live_get "$LIVE" PHASE)" = RUNNING ] && monitor_on && daemon_running; then ta=YES; fi
+  tt="$(temperature_now)" || tt=UNKNOWN
+  printf 'THERMAL_ENABLED=%s;THERMAL_LIMIT_C=%s;THERMAL_VOTE_MA=%s;THERMAL_GAP_C=%s;THERMAL_TEMP_DECI=%s;THERMAL_STATE=%s;THERMAL_ACTIVE=%s\n' \
+    "$ten" "$(thermal_limit)" "$(thermal_vote)" "$(thermal_gap)" "$tt" "$ts" "$ta"
+}
 interval_s() { awk -v m="$1" 'BEGIN { printf "%.3f", m/1000 }'; }
 voltage_now() {
   voltage="$(cat /sys/class/power_supply/battery/voltage_now 2>/dev/null)" || return 1
@@ -169,7 +248,9 @@ voltage_now() {
 monitor_on() { [ "$(cat "$MON" 2>/dev/null)" != 'off' ]; }
 write_live() {
   [ -d "$D" ] || return 0
-  printf 'PHASE=%s\nPROTO=%s\nTARGET=%s\nREASON=%s\n' "$1" "$4" "$2" "$3" > "$LIVE" 2>/dev/null || :
+  printf 'PHASE=%s\nPROTO=%s\nTARGET=%s\nREASON=%s\nTHERMAL_STATE=%s\nTHERMAL_BOOT=%s\n' \
+    "$1" "$4" "$2" "$3" "$thermal_state" "$(boot_id)" > "$LIVE.tmp.$$" 2>/dev/null &&
+    mv -f "$LIVE.tmp.$$" "$LIVE" 2>/dev/null || :
 }
 live_get() { awk -F'=' -v k="$2" '$1==k{print $2; exit}' "$1" 2>/dev/null; }
 unlock() {
@@ -258,8 +339,12 @@ control_run() {
   owning=0
   target=0
   proto=''
+  if [ "$(live_get "$LIVE" THERMAL_BOOT)" = "$(boot_id)" ]; then
+    case "$(live_get "$LIVE" THERMAL_STATE)" in LIMITED|SENSOR_ERROR) thermal_held=1;; esac
+  fi
   while :; do
     ivl="$(interval_s "$(interval_ms)")"
+    thermal_update
     if ! monitor_on; then
       if [ "$owning" -eq 1 ]; then
         revoke_own && log 'FINISHED_MONITOR_DISABLED' || log 'RECOVERY_REQUIRED_MONITOR_DISABLED'
@@ -299,21 +384,21 @@ control_run() {
       sleep "$ivl"
       continue
     fi
-    node="$(proto_node "$ap")"
     if [ "$owning" -eq 1 ] && [ "$proto" != "$ap" ]; then
       revoke_own && log 'FINISHED_PROTOCOL_CHANGED' || log 'RECOVERY_REQUIRED_PROTOCOL_CHANGED'
       unlock
       owning=0
       proto=''
     fi
+    # revoke_own 会读取旧租约并更新 node，撤销后重新选择当前协议节点。
+    node="$(proto_node "$ap")"
     if [ "$owning" -eq 0 ]; then
       if lock; then
         target="$(initial_raw)"
-        # PPS 首次写入也遵守 5800 上限，不能先写入高于上限的全局初始值。
-        if [ "$ap" = pps ]; then
-          max="$(proto_vote_max pps)"
-          [ "$target" -le "$max" ] || target="$max"
-        fi
+        # 首次写入也受协议上限和温控限制，避免先写入较高初始值。
+        max="$(proto_vote_max "$ap")"
+        [ "$target" -le "$max" ] || target="$max"
+        thermal_clamp
         if printf '%s %s %s %s %s\n' "$(boot_id)" "$(uptime_s)" "$$" "$target" "$ap" > "$L" &&
            printf '%s' "$target" > "$node/force_val" 2>/dev/null &&
            printf '1' > "$node/force_active" 2>/dev/null &&
@@ -341,13 +426,14 @@ control_run() {
         if [ "$v" -gt "$luv" ] && [ "$target" -gt "$VOTE_MIN" ]; then
           target=$((target - lstep))
           [ "$target" -ge "$VOTE_MIN" ] || target=$VOTE_MIN
-        elif [ "$v" -lt "$raise_uv" ] && [ "$target" -lt "$vm" ]; then
+        elif [ "$v" -lt "$raise_uv" ] && [ "$target" -lt "$vm" ] && [ "$thermal_held" -eq 0 ]; then
           target=$((target + rstep))
           [ "$target" -le "$vm" ] || target=$vm
         fi
       fi
       # 上限被调低时立即收敛，避免残留高于新上限的投票值。
       [ "$target" -le "$vm" ] || target=$vm
+      thermal_clamp
       if [ "$target" -ne "$prev_target" ] ||
          [ "$target" != "$(cat "$node/force_val" 2>/dev/null)" ]; then
         printf '%s' "$target" > "$node/force_val" 2>/dev/null || :
@@ -365,6 +451,16 @@ control_run() {
         log 'FINISHED_OWNERSHIP_CHANGED'
         write_live IDLE 0 OWNERSHIP_CHANGED ''
       fi
+    fi
+    if [ "$owning" -eq 1 ]; then
+      live_reason=ADJUSTED
+      case "$thermal_state" in
+        LIMITED) live_reason=THERMAL_LIMITED;;
+        SENSOR_ERROR) live_reason=THERMAL_SENSOR_ERROR;;
+      esac
+      # 正常起步原因保留到第一次目标变化，温控状态则每轮更新。
+      if [ "$live_reason" = ADJUSTED ] && [ "$(live_get "$LIVE" REASON)" = STARTED ]; then live_reason=STARTED; fi
+      write_live RUNNING "$target" "$live_reason" "$ap"
     fi
     sleep "$ivl"
   done
@@ -488,6 +584,29 @@ case "$CMD" in
     save_setting "$GAPF" "$mv" || fail 'STORAGE'
     echo "CUTOFF_GAP_MV=$mv"
     ;;
+  --thermal-enable|--thermal-disable)
+    [ "$#" -eq 1 ] || exit 2
+    mkdir -p "$D" || fail 'STORAGE'
+    value=off; [ "$CMD" != --thermal-enable ] || value=on
+    save_setting "$TENF" "$value" || fail 'STORAGE'
+    echo "THERMAL_ENABLED=$value"
+    ;;
+  --thermal-limit-set|--thermal-vote-set|--thermal-gap-set)
+    [ "$#" -eq 2 ] || exit 2
+    case "$2" in ''|0*|*[!0-9]*) echo INVALID_THERMAL_VALUE >&2; exit 2;; esac
+    case "$CMD" in
+      --thermal-limit-set) path="$TLIMF"; lo=20; hi=60; key=THERMAL_LIMIT_C;;
+      --thermal-vote-set) path="$TVOTEF"; lo=500; hi=5000; key=THERMAL_VOTE_MA;;
+      --thermal-gap-set) path="$TGAPF"; lo=1; hi=5; key=THERMAL_GAP_C;;
+    esac
+    num "$2" && [ "$2" -ge "$lo" ] && [ "$2" -le "$hi" ] || { echo INVALID_THERMAL_VALUE >&2; exit 2; }
+    mkdir -p "$D" || fail 'STORAGE'
+    save_setting "$path" "$2" || fail 'STORAGE'
+    echo "$key=$2"
+    ;;
+  --thermal-status)
+    thermal_status
+    ;;
   --status)
     state='STOPPED'
     target='0'
@@ -532,10 +651,11 @@ case "$CMD" in
       en='NO'; proto_on "$p" && en='YES'
       protos="$protos;${k}_ENABLED=$en;${k}_LIMIT_MV=$(proto_limit_mv "$p");${k}_VOTE_MAX=$(proto_vote_max "$p")"
     done
-    printf 'CONTROL_STATE=%s;TARGET_RAW=%s;REASON=%s;PHASE=%s;MONITOR_ENABLED=%s;ACTIVE_PROTOCOL=%s;ONLINE_PROTOCOL=%s;VOTE_INITIAL=%s;INTERVAL_MS=%s;RAISE_STEP=%s;LOWER_STEP=%s;CUTOFF_GAP_MV=%s%s\n' \
+    printf 'CONTROL_STATE=%s;TARGET_RAW=%s;REASON=%s;PHASE=%s;MONITOR_ENABLED=%s;ACTIVE_PROTOCOL=%s;ONLINE_PROTOCOL=%s;VOTE_INITIAL=%s;INTERVAL_MS=%s;RAISE_STEP=%s;LOWER_STEP=%s;CUTOFF_GAP_MV=%s%s;' \
       "$state" "$target" "$reason" "$phase" "$mon" "$(proto_key "$proto")" \
       "$(proto_key "$online_proto")" "$(initial_raw)" "$(interval_ms)" \
       "$(raise_step)" "$(lower_step)" "$(cutoff_gap)" "$protos"
+    thermal_status
     ;;
   --recover)
     [ -e "$L" ] || exit 0
@@ -549,7 +669,7 @@ case "$CMD" in
     else log 'GUARDIAN_RECOVERY_FAILED'; exit 5; fi
     ;;
   *)
-    echo 'USAGE: --status|--control-run|--monitor-enable|--monitor-disable|--monitor-ensure|--proto-enable PROTO|--proto-disable PROTO|--limit-set PROTO MV|--vote-max-set PROTO N|--vote-initial-set N|--interval-set MS|--raise-step-set N|--lower-step-set N|--cutoff-gap-set MV|--recover' >&2
+    echo 'USAGE: --status|--control-run|--monitor-enable|--monitor-disable|--monitor-ensure|--proto-enable PROTO|--proto-disable PROTO|--limit-set PROTO MV|--vote-max-set PROTO N|--vote-initial-set N|--interval-set MS|--raise-step-set N|--lower-step-set N|--cutoff-gap-set MV|--thermal-enable|--thermal-disable|--thermal-limit-set C|--thermal-vote-set MA|--thermal-gap-set C|--thermal-status|--recover' >&2
     exit 2
     ;;
 esac

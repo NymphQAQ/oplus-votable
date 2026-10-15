@@ -15,6 +15,21 @@ const app = readFileSync(join(dir,'webroot/app.js'),'utf8');
 const html = readFileSync(join(dir,'webroot/index.html'),'utf8');
 const prop = readFileSync(join(dir,'module.prop'),'utf8');
 
+test('UI、模块与安装包版本一致，温度控制入口及参数范围明确',()=>{
+  const version=/^version=([^\n]+)/m.exec(prop)[1];
+  assert.equal(version,'0.8.9-thermal-control');
+  assert.match(html,/ADAPTIVE · v0\.8\.9/);
+  assert.ok(readFileSync(join(dir,'build.mjs'),'utf8').includes('oplus-votable-'+version+'.zip'));
+  assert.match(html,/data-detail="thermal"/);
+  assert.match(html,/id="thermalSwitch" role="switch"/);
+  for(const [name,min,max,value] of [['Limit',20,60,45],['Vote',500,5000,1000],['Gap',1,5,2]]) {
+    for(const kind of ['Range','Input']) {
+      assert.match(html,new RegExp('id="thermal'+name+kind+'" min="'+min+'" max="'+max+'"[^>]*value="'+value+'"'));
+    }
+  }
+  assert.doesNotMatch(html,/温度限制仍未启用/);
+});
+
 test('oplus-votable 模块名、ID、WebUI 命令和私有目录统一', () => {
   const info = readFileSync(join(dir,'module.prop'), 'utf8');
   const guard = readFileSync(join(dir,'watchdog.sh'), 'utf8');
@@ -257,7 +272,7 @@ test('控制首页仅提供 UFCS/PPS 双协议控制且 VOOC 不可控',()=>{
   assert.match(markup,/data-detail="advanced"/);
   assert.match(markup,/data-control-back/);
   assert.doesNotMatch(markup,/id="confirmTest"|id="testSwitch"/);
-  assert.doesNotMatch(markup,/45°C|8 秒|8秒|固定目标 10700|最小投票/);
+  assert.doesNotMatch(markup,/8 秒|8秒|固定目标 10700|最小投票/);
   assert.ok(markup.indexOf('id="monitorSwitch"')<markup.indexOf('运行概况'),
     '电流控制面板必须位于运行概况之前');
   assert.match(app,/monitorSwitch/);

@@ -6,7 +6,8 @@
  *   电压 > 设定值               -> 投票值 - 降低步进（最低 1000）
  *   设定值+截止压差..设定值      -> 保持不变
  * 设定电压按协议独立保存；UFCS 默认 4560/9000，PPS 默认 4500/5000、最高 5800；
- * 投票初始值、监控时间、提升/降低步进、升流截止压差为全局高级参数。温度限制当前未启用。
+ * 投票初始值、监控时间、提升/降低步进、升流截止压差为全局高级参数。
+ * 此文件只建模电压分支；温控优先限流和恢复温差由 charge-test.sh 实现并以集成测试验证。
  */
 export const PROTOCOLS = Object.freeze(['ufcs', 'pps']);
 
@@ -96,7 +97,7 @@ export function clampVoteMax(raw) {
 /**
  * 依据当前电压（微伏）与当前参数计算下一步投票值。
  * voltageUv 非法时保持原值；超过设定值按降低步进回落，低于「设定值+截止压差」按提升步进上升，其余不变。
- * 结果始终收敛到 [VOTE_MIN_RAW, voteMax] 区间内。
+ * 普通调节下限为 VOTE_MIN_RAW；温控后低于该值的目标仅在满足升流条件时逐步恢复。
  */
 export function computeNextStep(state, voltageUv, params = {}) {
   let targetRaw = state.targetRaw;

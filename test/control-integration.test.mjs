@@ -36,6 +36,8 @@ function mk(t) {
   put(uptime,'101.24 202.55');
   const volt=join(base,'battery_voltage');
   put(volt,'4520000');
+  const temp=join(base,'battery_temp');
+  put(temp,'340');
   let code=original;
   const replacements=[
     ["/data/adb/oplus-votable",data],
@@ -44,6 +46,7 @@ function mk(t) {
     ["/proc/oplus-votable/PPS_CURR",p],
     ["/sys/class/oplus_mms/",sys+'/'],
     ["/sys/class/power_supply/battery/voltage_now",volt],
+    ["/sys/class/power_supply/battery/temp",temp],
     ["/proc/sys/kernel/random/boot_id",boot],
     ["/proc/uptime",uptime],
   ];
@@ -51,7 +54,7 @@ function mk(t) {
   const shell=join(base,'charge-test.sh');
   put(shell,code);
   const env={...process.env};
-  return {base,data,u,v,p,sys,shell,env,volt};
+  return {base,data,u,v,p,sys,shell,env,volt,temp,uptime};
 }
 
 function command(f,...args) {
@@ -88,6 +91,131 @@ function field(raw,key) {
   return m?Number(m[1]):NaN;
 }
 const online=(f,proto,on)=>writeFileSync(join(f.sys,proto,'data'),on?'1':'0');
+function sampleTemperature(f,value) {
+  writeFileSync(f.temp,String(value));
+  const tick=Math.floor(Number(readFileSync(f.uptime,'utf8').split(' ')[0]))+1;
+  writeFileSync(f.uptime,tick+'.24 202.55');
+}
+
+test('温控默认关闭，三项设置校验边界、原子保存、重读保留，坏配置回落默认',t=>{
+  const f=mk(t);
+  let st=command(f,'--thermal-status').stdout;
+  assert.match(st,/THERMAL_ENABLED=NO;THERMAL_LIMIT_C=45;THERMAL_VOTE_MA=1000;THERMAL_GAP_C=2/);
+  assert.match(st,/THERMAL_TEMP_DECI=340;THERMAL_STATE=OFF/);
+  for (const [arg,values,key,file] of [
+    ['limit',[20,45,60],'THERMAL_LIMIT_C','thermal-limit-c'],
+    ['vote',[500,1000,5000],'THERMAL_VOTE_MA','thermal-vote-ma'],
+    ['gap',[1,2,5],'THERMAL_GAP_C','thermal-gap-c'],
+  ]) {
+    for(const value of values) {
+      const result=command(f,'--thermal-'+arg+'-set',String(value));
+      assert.equal(result.status,0,result.stderr);
+      assert.match(statusOf(f),new RegExp(key+'='+value+';'));
+      assert.equal(readFileSync(join(f.data,'auto-control.'+file),'utf8').trim(),String(value));
+    }
+    for(const value of [values[0]-1,values[2]+1,'1.5','abc','$(touch nope)','045','9999999999999999']) {
+      assert.equal(command(f,'--thermal-'+arg+'-set',String(value)).status,2);
+    }
+    assert.match(statusOf(f),new RegExp(key+'='+values[2]+';'));
+    writeFileSync(join(f.data,'auto-control.'+file),'garbage');
+    assert.match(statusOf(f),new RegExp(key+'='+values[1]+';'));
+  }
+  assert.equal(command(f,'--thermal-enable').status,0);
+  assert.match(command(f,'--thermal-status').stdout,/THERMAL_ENABLED=YES/);
+  assert.equal(command(f,'--thermal-disable').status,0);
+  assert.match(command(f,'--thermal-status').stdout,/THERMAL_ENABLED=NO/);
+  assert.equal(existsSync(leasePath(f)),false,'修改温控设置不能绕过监测总开关自行接管');
+  assert.equal(readdirSync(f.data).some(name=>name.includes('.tmp.')),false);
+});
+
+test('UFCS/PPS 超温首次接管即受 500mA 限制，低电压也不能重新升流',async t=>{
+  for(const proto of ['ufcs','pps']) {
+    const f=mk(t);
+    online(f,'ufcs',proto==='ufcs'); online(f,'pps',proto==='pps');
+    command(f,'--thermal-enable'); command(f,'--thermal-vote-set','500');
+    command(f,'--vote-initial-set','9000');
+    writeFileSync(f.volt,'4400000'); sampleTemperature(f,450);
+    startDaemon(t,f);
+    const node=proto==='ufcs'?f.u:f.p;
+    await waitFor(()=>readFileSync(join(node,'force_val'),'utf8')==='500' && liveGet(f,'REASON')==='THERMAL_LIMITED','超温起步限制');
+    await sleep(450);
+    assert.equal(readFileSync(join(node,'force_val'),'utf8'),'500');
+    assert.match(readEvents(f),/START_ADAPTIVE_500/);
+    assert.doesNotMatch(readEvents(f),/START_ADAPTIVE_9000/);
+    assert.match(command(f,'--thermal-status').stdout,/THERMAL_STATE=LIMITED;THERMAL_ACTIVE=YES/);
+    assert.equal(readFileSync(f.temp,'utf8'),'450','温控不能改写温度节点');
+  }
+});
+
+test('运行中超温立即限流，恢复温差 5°C/1°C 边界生效，降温后按步进恢复',async t=>{
+  const f=mk(t);
+  command(f,'--thermal-enable'); command(f,'--thermal-vote-set','500');
+  command(f,'--thermal-gap-set','5'); command(f,'--vote-initial-set','3000');
+  command(f,'--raise-step-set','10'); command(f,'--interval-set','200');
+  startDaemon(t,f);
+  await waitFor(()=>liveGet(f,'THERMAL_STATE')==='NORMAL' && liveGet(f,'TARGET')==='3000','正常起步');
+  sampleTemperature(f,450);
+  await waitFor(()=>liveGet(f,'THERMAL_STATE')==='LIMITED' && liveGet(f,'TARGET')==='500','达到温度上限');
+  sampleTemperature(f,401);
+  await sleep(450);
+  assert.equal(liveGet(f,'THERMAL_STATE'),'LIMITED','尚未降到 40°C');
+  writeFileSync(f.volt,'4400000'); sampleTemperature(f,400);
+  await waitFor(()=>liveGet(f,'THERMAL_STATE')==='NORMAL' && Number(liveGet(f,'TARGET'))>500,'40°C 边界解除并爬坡');
+  assert.ok(Number(liveGet(f,'TARGET'))<1000,'不能由 500mA 瞬间跳回普通下限');
+  sampleTemperature(f,450);
+  await waitFor(()=>liveGet(f,'THERMAL_STATE')==='LIMITED','再次超温');
+  command(f,'--thermal-gap-set','1'); sampleTemperature(f,441);
+  await sleep(450);
+  assert.equal(liveGet(f,'THERMAL_STATE'),'LIMITED');
+  sampleTemperature(f,440);
+  await waitFor(()=>liveGet(f,'THERMAL_STATE')==='NORMAL','44°C 边界解除');
+});
+
+test('读温失败最多投票 1000mA，错误值不当作低温，正常且充分降温才恢复',async t=>{
+  const f=mk(t);
+  command(f,'--thermal-enable'); command(f,'--thermal-vote-set','5000');
+  command(f,'--vote-initial-set','9000');
+  writeFileSync(f.volt,'4400000'); sampleTemperature(f,'UNKNOWN');
+  startDaemon(t,f);
+  await waitFor(()=>liveGet(f,'THERMAL_STATE')==='SENSOR_ERROR' && liveGet(f,'TARGET')==='1000','无效温度保守起步');
+  for(const invalid of ['',1501,-501]) {
+    sampleTemperature(f,invalid);
+    await sleep(250);
+    assert.equal(liveGet(f,'THERMAL_STATE'),'SENSOR_ERROR');
+    assert.equal(liveGet(f,'TARGET'),'1000');
+  }
+  sampleTemperature(f,440);
+  await waitFor(()=>liveGet(f,'THERMAL_STATE')==='LIMITED','传感器恢复但未充分降温');
+  assert.equal(liveGet(f,'TARGET'),'1000','不能因配置限流 5000 而升高故障期间目标');
+  sampleTemperature(f,430);
+  await waitFor(()=>liveGet(f,'THERMAL_STATE')==='NORMAL' && Number(liveGet(f,'TARGET'))>1000,'降到恢复点');
+  command(f,'--thermal-disable'); sampleTemperature(f,'bad');
+  await waitFor(()=>liveGet(f,'THERMAL_STATE')==='OFF','关闭温控恢复原行为');
+});
+
+test('温控不会抬高更低目标或突破协议上限，协议切换和守护重启保留已触发限制',async t=>{
+  const f=mk(t);
+  command(f,'--thermal-enable'); command(f,'--thermal-vote-set','5000');
+  command(f,'--vote-max-set','ufcs','2000'); command(f,'--vote-initial-set','9000');
+  sampleTemperature(f,450);
+  const first=startDaemon(t,f);
+  await waitFor(()=>liveGet(f,'TARGET')==='2000','协议上限优先');
+  command(f,'--thermal-vote-set','500');
+  await waitFor(()=>liveGet(f,'TARGET')==='500','运行中调低限流值');
+  sampleTemperature(f,440);
+  online(f,'ufcs',false); online(f,'pps',true);
+  await waitFor(()=>liveGet(f,'PROTO')==='pps' && liveGet(f,'TARGET')==='500','协议切换仍限流');
+  assert.equal(readFileSync(join(f.u,'force_active'),'utf8'),'0');
+  first.kill('SIGKILL'); await onceExit(first);
+  const second=startDaemon(t,f);
+  await waitFor(()=>readFileSync(leasePath(f),'utf8').split(' ')[2]===String(second.pid) && liveGet(f,'REASON')==='THERMAL_LIMITED' && readFileSync(join(f.p,'force_val'),'utf8')==='500','恢复温差内重启保持限制');
+  command(f,'--thermal-vote-set','5000');
+  await sleep(300);
+  assert.equal(liveGet(f,'TARGET'),'500','限流上限调高不能主动升流');
+  writeFileSync(join(f.data,'auto-control.monitor'),'off');
+  await waitFor(()=>readFileSync(join(f.p,'force_active'),'utf8')==='0','关闭监测撤销接管');
+  assert.match(command(f,'--thermal-status').stdout,/THERMAL_STATE=IDLE;THERMAL_ACTIVE=NO/);
+});
 
 test('--status 未接管时报告 STOPPED、总开关默认开、UFCS/PPS 默认开与各自默认参数',t=>{
   const f=mk(t);

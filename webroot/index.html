@@ -202,13 +202,13 @@
         <div class="brandmark" aria-hidden="true">U</div>
         <div><h1>oplus-votable</h1><div class="subtitle">电流控制 · 电池实时状态</div></div>
       </div>
-      <span class="pill">ADAPTIVE · v0.8.3</span>
+      <span class="pill">ADAPTIVE · v0.8.9</span>
     </header>
 
     <div id="error" role="alert" hidden></div>
     <section id="page-control" class="tab-page" role="tabpanel" aria-labelledby="tab-control" hidden>
     <div id="control-index">
-    <div class="notice"><strong>oplus-votable 电流控制</strong> · 仅在 UFCS / PPS 协议在线且对应开关开启时，使用自适应投票值控制电流上限。VOOC / SUPERVOOC 仍可只读识别和诊断，不再进行主动电流控制。UFCS 默认电压 4560 mV / 投票上限 9000 mA；PPS 默认电压 4500 mV / 投票上限 5000 mA，最高 5800 mA。温度限制仍未启用，控制存在风险。</div>
+    <div class="notice"><strong>oplus-votable 电流控制</strong> · 仅在 UFCS / PPS 协议在线且对应开关开启时，使用自适应投票值控制电流上限。VOOC / SUPERVOOC 仍可只读识别和诊断，不再进行主动电流控制。UFCS 默认电压 4560 mV / 投票上限 9000 mA；PPS 默认电压 4500 mV / 投票上限 5000 mA，最高 5800 mA。温度控制默认关闭，可在设置中开启。</div>
     <div class="section-head"><h2>电流控制</h2><small>自适应 · 仅 UFCS / PPS 双协议调参</small></div>
     <section class="status-panel" aria-label="电流控制总览">
       <p id="controlReadiness" class="detail" aria-live="polite">正在读取控制状态…</p>
@@ -236,6 +236,11 @@
         <span class="entry-icon">⚙</span>
         <span class="entry-body"><strong>电流控制</strong><small>高级设置 · 初始值、监控时间、步进、升流截止压差</small></span>
         <span class="entry-chevron" aria-hidden="true">›</span>
+      </button>
+      <button class="control-entry" type="button" data-detail="thermal" aria-controls="control-detail-thermal">
+        <span class="entry-icon" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 14.8V5a3 3 0 0 0-6 0v9.8a5 5 0 1 0 6 0Z"/><path d="M11 8v10"/></svg></span>
+        <span class="entry-body"><strong>温度控制</strong><small>电池温度上限、限流值、恢复温差</small></span>
+        <span class="proto-tag" id="thermalTag">读取中…</span><span class="entry-chevron" aria-hidden="true">›</span>
       </button>
     </section>
     </div>
@@ -342,6 +347,43 @@
           <div class="detail">升流截止压差：<strong id="advGapValue">-50</strong> mV · 默认 -50，可调范围 -100–0 · 电池电压达到「设定电压 + 截止压差」时停止升流。数值越低，充电功率越稳定，但是会降低功率上限</div>
         </div>
         <button type="button" id="advReset" class="button">恢复默认</button>
+      </div>
+    </section>
+    <section id="control-detail-thermal" class="control-detail" hidden aria-label="温度控制设置">
+      <div class="detail-toolbar">
+        <button type="button" class="detail-back" data-control-back aria-label="返回控制主页">‹ <span>返回</span></button>
+        <strong>温度控制</strong>
+      </div>
+      <div class="proto-body">
+        <p id="thermalSaveStatus" class="save-status" role="status">设置自动保存，关闭页面或重启后继续生效。</p>
+        <label class="switch-row">
+          <input type="checkbox" id="thermalSwitch" role="switch" aria-describedby="thermalNote">
+          <span class="switch-track" aria-hidden="true"></span>
+          <span class="switch-text">温度控制：<span id="thermalEnabled">读取中…</span></span>
+        </label>
+        <div class="metric"><div class="name">实时电池温度</div><div id="thermalTemp" class="value">—</div></div>
+        <p id="thermalStatus" class="detail" role="status">正在读取温度控制状态…</p>
+        <div class="limit-control">
+          <div class="name">温度上限（°C）</div>
+          <input type="range" id="thermalLimitRange" min="20" max="60" step="1" value="45" aria-label="温度上限滑动条">
+          <input type="number" id="thermalLimitInput" min="20" max="60" step="1" value="45" aria-label="温度上限输入框">
+          <div class="detail">温度上限：<strong id="thermalLimitValue">45</strong> °C · 默认 45，可调范围 20–60</div>
+        </div>
+        <div class="setting-divider" role="separator" aria-hidden="true"></div>
+        <div class="limit-control">
+          <div class="name">温控限流值（mA）</div>
+          <input type="range" id="thermalVoteRange" min="500" max="5000" step="50" value="1000" aria-label="温控限流值滑动条">
+          <input type="number" id="thermalVoteInput" min="500" max="5000" step="50" value="1000" aria-label="温控限流值输入框">
+          <div class="detail">温控限流值：<strong id="thermalVoteValue">1000</strong> mA · 默认 1000，可调范围 500–5000</div>
+        </div>
+        <div class="setting-divider" role="separator" aria-hidden="true"></div>
+        <div class="limit-control">
+          <div class="name">恢复温差（°C）</div>
+          <input type="range" id="thermalGapRange" min="1" max="5" step="1" value="2" aria-label="恢复温差滑动条">
+          <input type="number" id="thermalGapInput" min="1" max="5" step="1" value="2" aria-label="恢复温差输入框">
+          <div class="detail">恢复温差：<strong id="thermalGapValue">2</strong> °C · 默认 2，可调范围 1–5</div>
+        </div>
+        <p id="thermalNote" class="vote-note">达到温度上限后限制投票目标，并禁止升流；降至「温度上限 − 恢复温差」及以下后解除，按原有步进恢复。每秒读取真实电池温度，仅在自动监测开启且 UFCS / PPS 已接管时控制。读温失败时限制到 1000 mA 与所设限流值中的较小值。限流不等于停止充电。</p>
       </div>
     </section>
     </section>
@@ -480,7 +522,7 @@
       <div class="log-header"><span id="count">0 条记录</span><span id="fileSize">—</span></div>
       <div class="log-list" id="entries"><div class="empty">正在读取日志…</div></div>
     </section>
-    <p class="footer">本模块仅在 UFCS / PPS 协议下控制投票值；VOOC 只读识别。内核请求不等于实测电流；温度限制仍未启用。</p>
+    <p class="footer">本模块仅在 UFCS / PPS 协议下控制投票值；VOOC 只读识别。内核请求不等于实测电流；温度控制可在设置中开启。</p>
     </section>
   </main>
   <nav id="bottomNav" class="bottom-nav" aria-label="底部页面导航">
