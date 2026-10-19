@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, rmSync, statSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -38,6 +38,12 @@ function mk(t) {
   put(volt,'4520000');
   const temp=join(base,'battery_temp');
   put(temp,'340');
+  const capacity=join(base,'battery_capacity');
+  put(capacity,'50');
+  const shellTemp=join(base,'shell-temp');
+  put(shellTemp,'0 34000\n1 34000\n2 34000\n');
+  const mmi=join(base,'mmi_charging_enable'),usbOnline=join(base,'usb_online');
+  put(mmi,'1');put(usbOnline,'1');
   let code=original;
   const replacements=[
     ["/data/adb/oplus-votable",data],
@@ -47,14 +53,25 @@ function mk(t) {
     ["/sys/class/oplus_mms/",sys+'/'],
     ["/sys/class/power_supply/battery/voltage_now",volt],
     ["/sys/class/power_supply/battery/temp",temp],
+    ["/sys/class/power_supply/battery/capacity",capacity],
     ["/proc/sys/kernel/random/boot_id",boot],
     ["/proc/uptime",uptime],
+    ["/proc/shell-temp",shellTemp],
+    ["/sys/devices/virtual/oplus_chg/battery/mmi_charging_enable",mmi],
+    ["/sys/class/power_supply/usb/online",usbOnline],
   ];
   for (const [a,b] of replacements) code=code.split(a).join(b);
   const shell=join(base,'charge-test.sh');
   put(shell,code);
-  const env={...process.env};
-  return {base,data,u,v,p,sys,shell,env,volt,temp,uptime};
+  const bin=join(base,'bin'),horaeLog=join(base,'horae.log');
+  mkdirSync(bin);
+  put(join(bin,'timeout'),'#!/bin/sh\n[ "$1" = 3 ] || exit 99\nshift\nexec "$@"\n');
+  put(join(bin,'dumpsys'),'#!/bin/sh\nif [ "$*" = horae ]; then printf "Temp:36.00\\n"; if [ "${HORAETEST_STUCK:-0}" = 1 ] && [ ! -f "$HORAETEST_RESTARTED" ]; then printf "TestModeShellTemp:33000\\n"; fi; exit 0; fi\nprintf "%s\\n" "$*" >> "$HORAETEST_LOG"\n[ "$*" = "horae testmode" ] || [ "$*" = "horae testmode false" ] || exit 98\n[ "${HORAETEST_EXIT:-0}" = 0 ] || exit "$HORAETEST_EXIT"\nif [ "$*" = "horae testmode" ]; then chmod 0644 "$HORAETEST_NODE"; printf reset > "$HORAETEST_NODE"; fi\n');
+  put(join(bin,'getprop'),'#!/bin/sh\n[ "$*" = init.svc.horae ] || exit 98\nprintf running\n');
+  put(join(bin,'setprop'),'#!/bin/sh\n[ "$*" = "ctl.restart horae" ] || exit 98\n[ "${HORAETEST_RESTART_FAIL:-0}" = 0 ] || exit 1\nprintf restarted > "$HORAETEST_RESTARTED"\n');
+  for(const name of ['timeout','dumpsys','getprop','setprop']) chmodSync(join(bin,name),0o755);
+  const env={...process.env,PATH:bin+':'+process.env.PATH,HORAETEST_LOG:horaeLog,HORAETEST_NODE:shellTemp,HORAETEST_RESTARTED:join(base,'horae-restarted')};
+  return {base,data,u,v,p,sys,shell,env,volt,temp,uptime,shellTemp,capacity,horaeLog,mmi,usbOnline};
 }
 
 function command(f,...args) {
@@ -91,11 +108,324 @@ function field(raw,key) {
   return m?Number(m[1]):NaN;
 }
 const online=(f,proto,on)=>writeFileSync(join(f.sys,proto,'data'),on?'1':'0');
+// 权限位（八进制）用于校验温度伪装是否已将节点设为只读。
+const modeOf=path=>(statSync(path).mode & 0o777).toString(8).padStart(3,'0');
 function sampleTemperature(f,value) {
   writeFileSync(f.temp,String(value));
   const tick=Math.floor(Number(readFileSync(f.uptime,'utf8').split(' ')[0]))+1;
   writeFileSync(f.uptime,tick+'.24 202.55');
 }
+const clockAt=(f,ms)=>writeFileSync(f.uptime,(ms/1000).toFixed(3)+' 202.55');
+
+test('间断充电默认关闭，时间设置校验边界并保存，支持多个独立电量区间',t=>{
+  const f=mk(t);
+  assert.match(command(f,'--pulse-status').stdout,/PULSE_ENABLED=NO;PULSE_CHARGE_S=5;PULSE_PAUSE_MS=1000;PULSE_RANGES=NONE/);
+  for(const [field,valid,invalid] of [['charge',[1,5,1200],[0,1201,-1,'1.5','abc']],['pause',[0,1000,60000],[-1,60001,'1.5','$(touch nope)']]]) {
+    for(const value of valid) assert.equal(command(f,'--pulse-'+field+'-set',String(value)).status,0);
+    for(const value of invalid) assert.equal(command(f,'--pulse-'+field+'-set',String(value)).status,2);
+  }
+  assert.match(command(f,'--pulse-status').stdout,/PULSE_CHARGE_S=1200;PULSE_PAUSE_MS=60000/);
+  assert.equal(command(f,'--pulse-range-set','60,80').status,0);
+  assert.equal(command(f,'--pulse-range-set','0,40').status,0);
+  assert.match(command(f,'--pulse-status').stdout,/PULSE_RANGES=0,40:60,80;PULSE_CONFIG_VALID=YES/);
+  for(const row of ['40,60','-1,40','0,101','80,60','0,40;touch nope']) assert.notEqual(command(f,'--pulse-range-set',row).status,0);
+  assert.match(command(f,'--pulse-status').stdout,/PULSE_RANGES=0,40:60,80/);
+  assert.equal(command(f,'--pulse-range-delete','60,80').status,0);
+  assert.match(command(f,'--pulse-status').stdout,/PULSE_RANGES=0,40;/);
+  command(f,'--pulse-enable'); command(f,'--pulse-disable');
+  assert.match(command(f,'--pulse-status').stdout,/PULSE_ENABLED=NO;PULSE_CHARGE_S=1200;PULSE_PAUSE_MS=60000;PULSE_RANGES=0,40/);
+  assert.equal(existsSync(leasePath(f)),false,'修改间断设置不能自行接管充电');
+});
+
+test('充电 5 秒后 MMI 停充，1000 毫秒后恢复当前上限，循环并在关闭监测时恢复 MMI',async t=>{
+  const f=mk(t);
+  command(f,'--vote-initial-set','3000'); command(f,'--pulse-enable');
+  startDaemon(t,f);
+  await waitFor(()=>liveGet(f,'PULSE_STATE')==='CHARGING' && liveGet(f,'TARGET')==='3000','正常充电阶段');
+  assert.equal(liveGet(f,'PULSE_DEADLINE_MS'),'106240');
+  clockAt(f,106239); await sleep(250);
+  assert.equal(liveGet(f,'PULSE_STATE'),'CHARGING');
+  clockAt(f,106240);
+  await waitFor(()=>liveGet(f,'PULSE_STATE')==='PAUSED','满 5 秒 MMI 停充');
+  assert.equal(readFileSync(join(f.u,'force_val'),'utf8'),'3000');
+  assert.equal(readFileSync(join(f.u,'force_active'),'utf8'),'1');
+  assert.equal(readFileSync(f.mmi,'utf8'),'0');
+  assert.equal(readFileSync(leasePath(f),'utf8').split(' ')[3],'3000');
+  assert.equal(command(f,'--recover').status,0);
+  assert.equal(readFileSync(f.mmi,'utf8'),'0','守护不能抢先恢复仍在执行的暂停');
+  assert.match(statusOf(f),/CONTROL_STATE=RUNNING;TARGET_RAW=3000/);
+  assert.equal(liveGet(f,'PULSE_DEADLINE_MS'),'107240');
+  clockAt(f,107239); await sleep(250); assert.equal(readFileSync(f.mmi,'utf8'),'0');
+  clockAt(f,107240);
+  await waitFor(()=>liveGet(f,'PULSE_STATE')==='CHARGING' && liveGet(f,'TARGET')==='9000','1000 毫秒后恢复当前上限');
+  assert.equal(readFileSync(join(f.u,'force_active'),'utf8'),'1');
+  assert.equal(readFileSync(f.mmi,'utf8'),'1');
+  clockAt(f,112240);
+  await waitFor(()=>liveGet(f,'PULSE_STATE')==='PAUSED','下一轮再次暂停');
+  writeFileSync(join(f.data,'auto-control.monitor'),'off');
+  await waitFor(()=>!existsSync(leasePath(f)),'监测关闭时清理暂停租约');
+  assert.equal(readFileSync(join(f.u,'force_active'),'utf8'),'0');
+  await waitFor(()=>readFileSync(f.mmi,'utf8')==='1','关闭监测恢复 MMI');
+});
+
+test('间断充电只在所选多个电量区间生效，离开区间立即恢复，重新进入从完整充电阶段开始',async t=>{
+  const f=mk(t);
+  command(f,'--vote-initial-set','3000');command(f,'--pulse-enable');
+  command(f,'--pulse-range-set','0,40');command(f,'--pulse-range-set','60,80');
+  startDaemon(t,f);
+  await waitFor(()=>liveGet(f,'PULSE_STATE')==='OUTSIDE_RANGE','50% 不在所选区间');
+  for(const capacity of [0,40,60,80]) {
+    writeFileSync(f.capacity,String(capacity));
+    await waitFor(()=>liveGet(f,'PULSE_STATE')==='CHARGING','进入区间 '+capacity);
+    const deadline=Number(liveGet(f,'PULSE_DEADLINE_MS'));
+    clockAt(f,deadline);
+    await waitFor(()=>liveGet(f,'PULSE_STATE')==='PAUSED','区间内暂停');
+    assert.equal(readFileSync(f.mmi,'utf8'),'0');
+    writeFileSync(f.capacity,'50');
+    await waitFor(()=>liveGet(f,'PULSE_STATE')==='OUTSIDE_RANGE' && liveGet(f,'TARGET')==='3000','离开区间恢复');
+    assert.equal(readFileSync(join(f.u,'force_active'),'utf8'),'1');
+    assert.equal(readFileSync(f.mmi,'utf8'),'1');
+  }
+  writeFileSync(f.capacity,'UNKNOWN');
+  await sleep(250);assert.equal(liveGet(f,'PULSE_STATE'),'OUTSIDE_RANGE');
+});
+
+test('暂停期间仍应用当前 UFCS 电量参数与温控，恢复时使用当前允许的目标',async t=>{
+  const f=mk(t);
+  command(f,'--soc-range-set','0,20,6000,4000,100,100,500,-50');
+  command(f,'--soc-range-set','21,80,2000,9000,100,100,500,-50');
+  command(f,'--soc-enable'); command(f,'--pulse-enable');
+  writeFileSync(f.capacity,'20');
+  startDaemon(t,f);
+  await waitFor(()=>liveGet(f,'TARGET')==='4000','按当前电量参数起步');
+  clockAt(f,106240);
+  await waitFor(()=>liveGet(f,'PULSE_STATE')==='PAUSED','进入暂停');
+  writeFileSync(f.capacity,'21'); await sleep(250);
+  assert.equal(readFileSync(f.mmi,'utf8'),'0');
+  assert.equal(readFileSync(join(f.u,'force_val'),'utf8'),'4000','暂停期间不改写保存值');
+  clockAt(f,107240);
+  await waitFor(()=>liveGet(f,'PULSE_STATE')==='CHARGING' && liveGet(f,'TARGET')==='2000','恢复到新电量区间上限');
+  assert.equal(readFileSync(join(f.u,'force_active'),'utf8'),'1');
+  assert.equal(readFileSync(f.mmi,'utf8'),'1');
+  command(f,'--thermal-enable'); command(f,'--thermal-vote-set','500');
+  writeFileSync(f.temp,'450'); clockAt(f,112240);
+  await waitFor(()=>liveGet(f,'PULSE_STATE')==='PAUSED','第二次暂停');
+  clockAt(f,113240);
+  await waitFor(()=>liveGet(f,'PULSE_STATE')==='CHARGING' && liveGet(f,'TARGET')==='500','恢复时温控仍优先');
+  assert.equal(readFileSync(join(f.u,'force_active'),'utf8'),'1');
+});
+
+test('暂停时关闭功能、断开时间设为 0 或时钟异常均恢复正常投票，PPS 同样循环',async t=>{
+  const f=mk(t);
+  command(f,'--vote-initial-set','3000');command(f,'--pulse-enable');
+  startDaemon(t,f);
+  await waitFor(()=>liveGet(f,'PULSE_STATE')==='CHARGING','启动');
+  clockAt(f,106240);await waitFor(()=>liveGet(f,'PULSE_STATE')==='PAUSED','暂停');
+  command(f,'--pulse-disable');
+  await waitFor(()=>liveGet(f,'PULSE_STATE')==='OFF' && liveGet(f,'TARGET')==='3000','关闭后恢复');
+  assert.equal(readFileSync(join(f.u,'force_active'),'utf8'),'1');
+  command(f,'--pulse-enable');await waitFor(()=>liveGet(f,'PULSE_STATE')==='CHARGING','重开重新计时');
+  clockAt(f,111240);await waitFor(()=>liveGet(f,'PULSE_STATE')==='PAUSED','再次暂停');
+  command(f,'--pulse-pause-set','0');
+  await waitFor(()=>liveGet(f,'PULSE_STATE')==='CONTINUOUS' && liveGet(f,'TARGET')==='3000','0 毫秒保持连续充电');
+  assert.equal(readFileSync(join(f.u,'force_active'),'utf8'),'1');
+  clockAt(f,211240);await sleep(250);assert.equal(liveGet(f,'TARGET'),'3000');
+  command(f,'--pulse-pause-set','1000');await waitFor(()=>liveGet(f,'PULSE_STATE')==='CHARGING','恢复循环');
+  clockAt(f,216240);await waitFor(()=>liveGet(f,'PULSE_STATE')==='PAUSED','再次暂停');
+  writeFileSync(f.uptime,'invalid');
+  await waitFor(()=>liveGet(f,'PULSE_STATE')==='CLOCK_ERROR' && liveGet(f,'TARGET')==='3000','时钟异常恢复强制投票');
+  assert.equal(readFileSync(join(f.u,'force_active'),'utf8'),'1');
+  clockAt(f,217240);writeFileSync(f.volt,'4470000');
+  online(f,'ufcs',false);online(f,'pps',true);
+  await waitFor(()=>liveGet(f,'PROTO')==='pps' && liveGet(f,'PULSE_STATE')==='CHARGING' && liveGet(f,'TARGET')==='3000','PPS 从正常充电阶段起步');
+  clockAt(f,222240);await waitFor(()=>liveGet(f,'PROTO')==='pps' && liveGet(f,'PULSE_STATE')==='PAUSED','PPS 暂停');
+  assert.equal(readFileSync(f.mmi,'utf8'),'0');
+  assert.equal(readFileSync(join(f.p,'force_val'),'utf8'),'3000');
+  clockAt(f,223240);await waitFor(()=>liveGet(f,'PULSE_STATE')==='CHARGING' && liveGet(f,'TARGET')==='5000','PPS 恢复上限');
+  assert.equal(readFileSync(join(f.p,'force_active'),'utf8'),'1');
+  assert.equal(readFileSync(f.mmi,'utf8'),'1');
+});
+
+test('MMI 停充先核对本模块租约，核对失败不开始计时，节点恢复后重试',async t=>{
+  const f=mk(t);
+  command(f,'--vote-initial-set','3000');command(f,'--pulse-enable');
+  startDaemon(t,f);
+  await waitFor(()=>liveGet(f,'PULSE_STATE')==='CHARGING','正常充电');
+  writeFileSync(join(f.u,'force_val'),'7000');clockAt(f,106240);
+  await waitFor(()=>liveGet(f,'PULSE_STATE')==='WRITE_ERROR','外部投票值不匹配时拒绝撤销');
+  assert.equal(readFileSync(join(f.u,'force_active'),'utf8'),'1');
+  assert.equal(readFileSync(join(f.u,'force_val'),'utf8'),'7000');
+  assert.equal(liveGet(f,'PULSE_DEADLINE_MS'),'0');
+  writeFileSync(join(f.u,'force_val'),'3000');clockAt(f,107240);
+  await waitFor(()=>liveGet(f,'PULSE_STATE')==='PAUSED','恢复后重试成功');
+  assert.equal(readFileSync(f.mmi,'utf8'),'0');
+  assert.equal(liveGet(f,'PULSE_DEADLINE_MS'),'108240');
+});
+
+test('MMI 接口不可用或已被外部停用时不误恢复，接口可用后重试',async t=>{
+  const f=mk(t);
+  writeFileSync(f.mmi,'0');command(f,'--pulse-enable');startDaemon(t,f);
+  await waitFor(()=>liveGet(f,'PULSE_STATE')==='CHARGING','正常阶段');clockAt(f,106240);
+  await waitFor(()=>liveGet(f,'PULSE_STATE')==='WRITE_ERROR','外部停充拒绝接管');
+  assert.equal(existsSync(join(f.data,'pulse-mmi.lease')),false);
+  command(f,'--pulse-disable');await waitFor(()=>liveGet(f,'PULSE_STATE')==='OFF','关闭功能');
+  assert.equal(readFileSync(f.mmi,'utf8'),'0','不能恢复其它来源的停充');
+  rmSync(f.mmi);command(f,'--pulse-enable');await waitFor(()=>liveGet(f,'PULSE_STATE')==='CHARGING','重开');
+  clockAt(f,111240);await waitFor(()=>liveGet(f,'PULSE_STATE')==='WRITE_ERROR','缺少接口');
+  assert.equal(existsSync(f.mmi),false,'不能创建伪造的充电节点');
+  writeFileSync(f.mmi,'1');await waitFor(()=>liveGet(f,'PULSE_STATE')==='PAUSED','接口恢复后停充');
+  assert.equal(readFileSync(f.mmi,'utf8'),'0');
+});
+
+test('MMI 导致协议暂时离线仍完成暂停，恢复后等待协议重新在线；真实拔线立即恢复 MMI',async t=>{
+  const f=mk(t);command(f,'--pulse-enable');startDaemon(t,f);
+  await waitFor(()=>liveGet(f,'PULSE_STATE')==='CHARGING','启动');clockAt(f,106240);
+  await waitFor(()=>liveGet(f,'PULSE_STATE')==='PAUSED','暂停');online(f,'ufcs',false);
+  clockAt(f,106740);await sleep(250);
+  assert.equal(liveGet(f,'PULSE_STATE'),'PAUSED');assert.equal(readFileSync(f.mmi,'utf8'),'0');
+  clockAt(f,107240);await waitFor(()=>readFileSync(f.mmi,'utf8')==='1' && liveGet(f,'REASON')==='WAITING_PROTOCOL','恢复并等待协议');
+  online(f,'ufcs',true);await waitFor(()=>liveGet(f,'PULSE_STATE')==='CHARGING','协议恢复');
+  clockAt(f,112240);await waitFor(()=>liveGet(f,'PULSE_STATE')==='PAUSED','再次暂停');
+  writeFileSync(f.usbOnline,'0');online(f,'ufcs',false);
+  await waitFor(()=>readFileSync(f.mmi,'utf8')==='1' && !existsSync(join(f.data,'pulse-mmi.lease')),'真实拔线恢复 MMI 并完成清理');
+  assert.equal(existsSync(join(f.data,'pulse-mmi.lease')),false);
+});
+
+test('MMI 恢复失败保留恢复记录并重试，不误报正常充电',async t=>{
+  const f=mk(t);command(f,'--pulse-enable');startDaemon(t,f);
+  await waitFor(()=>liveGet(f,'PULSE_STATE')==='CHARGING','启动');clockAt(f,106240);
+  await waitFor(()=>liveGet(f,'PULSE_STATE')==='PAUSED','暂停');
+  rmSync(f.mmi);mkdirSync(f.mmi);clockAt(f,107240);
+  await waitFor(()=>liveGet(f,'PULSE_STATE')==='WRITE_ERROR','恢复失败');
+  assert.equal(existsSync(join(f.data,'pulse-mmi.lease')),true);
+  assert.notEqual(liveGet(f,'PULSE_STATE'),'CHARGING');
+  rmSync(f.mmi,{recursive:true});writeFileSync(f.mmi,'0');
+  await waitFor(()=>readFileSync(f.mmi,'utf8')==='1' && liveGet(f,'PULSE_STATE')==='CHARGING','恢复后继续充电');
+  assert.equal(liveGet(f,'TARGET'),'9000');assert.equal(existsSync(join(f.data,'pulse-mmi.lease')),false);
+});
+
+test('控制进程崩溃后即使投票租约缺失也可恢复自有 MMI；TERM 退出立即恢复',async t=>{
+  const f=mk(t);command(f,'--pulse-enable');const child=startDaemon(t,f);
+  await waitFor(()=>liveGet(f,'PULSE_STATE')==='CHARGING','启动');clockAt(f,106240);
+  await waitFor(()=>liveGet(f,'PULSE_STATE')==='PAUSED','暂停');
+  child.kill('SIGKILL');await onceExit(child);rmSync(leasePath(f));
+  const recovered=command(f,'--recover');assert.equal(recovered.status,0,recovered.stderr);
+  assert.equal(readFileSync(f.mmi,'utf8'),'1');assert.equal(existsSync(join(f.data,'pulse-mmi.lease')),false);
+  clockAt(f,107240);const next=startDaemon(t,f);
+  await waitFor(()=>liveGet(f,'PULSE_STATE')==='CHARGING','重新启动');clockAt(f,112240);
+  await waitFor(()=>liveGet(f,'PULSE_STATE')==='PAUSED','再次暂停');
+  next.kill('SIGTERM');await onceExit(next);
+  assert.equal(readFileSync(f.mmi,'utf8'),'1');assert.equal(existsSync(join(f.data,'pulse-mmi.lease')),false);
+});
+
+test('卸载先关闭控制并恢复本模块 MMI，损坏或跨启动的标记不能误开启充电',async t=>{
+  const f=mk(t);command(f,'--pulse-enable');const child=startDaemon(t,f);
+  await waitFor(()=>liveGet(f,'PULSE_STATE')==='CHARGING','启动');clockAt(f,106240);
+  await waitFor(()=>liveGet(f,'PULSE_STATE')==='PAUSED','暂停');
+  const uninstall=join(f.base,'uninstall.sh');
+  writeFileSync(uninstall,readFileSync(join(root,'uninstall.sh'),'utf8').replaceAll('/data/adb/oplus-votable',f.data));
+  const result=spawnSync('sh',[uninstall],{encoding:'utf8',env:f.env,timeout:5000});
+  assert.equal(result.status,0,result.stderr);await onceExit(child);
+  assert.equal(readFileSync(f.mmi,'utf8'),'1');assert.equal(existsSync(join(f.data,'pulse-mmi.lease')),false);
+  writeFileSync(f.mmi,'0');writeFileSync(join(f.data,'pulse-mmi.lease'),'invalid marker\n');
+  assert.equal(command(f,'--recover').status,3);assert.equal(readFileSync(f.mmi,'utf8'),'0');
+  writeFileSync(join(f.data,'pulse-mmi.lease'),'87654321-1234-1234-1234-123456789012 12345\n');
+  assert.equal(command(f,'--recover').status,0);assert.equal(readFileSync(f.mmi,'utf8'),'0');
+  assert.equal(existsSync(join(f.data,'pulse-mmi.lease')),false);
+});
+
+test('UFCS 电压上限 4660，PPS 保持 4560，保存和运行时读取均按协议校验',t=>{
+  const f=mk(t);
+  assert.equal(command(f,'--limit-set','ufcs','4660').status,0);
+  assert.match(statusOf(f),/UFCS_LIMIT_MV=4660/);
+  assert.equal(command(f,'--limit-set','ufcs','4661').status,2);
+  assert.equal(command(f,'--limit-set','pps','4660').status,2);
+  writeFileSync(join(f.data,'auto-control.pps.limit-mv'),'4660');
+  assert.match(statusOf(f),/PPS_LIMIT_MV=4500/);
+});
+
+test('电量区间保存六项独立参数，包含边界，禁止重叠和非法值，删除后回退且通用设置不变',t=>{
+  const f=mk(t);
+  const row='0,20,4200,2400,150,200,600,-80';
+  assert.match(command(f,'--soc-status').stdout,/SOC_ENABLED=NO.*SOC_RANGES=NONE/);
+  const result=command(f,'--soc-range-set',row);
+  assert.equal(result.status,0,result.stdout+result.stderr);
+  command(f,'--soc-enable');
+  for(const capacity of [0,20]) {
+    writeFileSync(f.capacity,String(capacity));
+    const st=command(f,'--soc-status').stdout;
+    assert.match(st,/SOC_MATCH=0,20;SOC_EFFECTIVE_VOTE_MAX=4200;SOC_EFFECTIVE_INITIAL=2400;SOC_EFFECTIVE_INTERVAL_MS=150;SOC_EFFECTIVE_RAISE_STEP=200;SOC_EFFECTIVE_LOWER_STEP=600;SOC_EFFECTIVE_CUTOFF_GAP_MV=-80/);
+  }
+  writeFileSync(f.capacity,'21');
+  assert.match(command(f,'--soc-status').stdout,/SOC_MATCH=NONE;SOC_EFFECTIVE_VOTE_MAX=9000;SOC_EFFECTIVE_INITIAL=1000/);
+  const file=join(f.data,'auto-control.ufcs.soc-ranges');
+  for(const invalid of ['20,30,4200,2400,150,200,600,-80','-1,20,4200,2400,150,200,600,-80','0,101,4200,2400,150,200,600,-80','30,21,4200,2400,150,200,600,-80','0,20,999,2400,150,200,600,-80','0,20,4200,999,150,200,600,-80','0,20,4200,2400,19,200,600,-80','0,20,4200,2400,150,9,600,-80','0,20,4200,2400,150,200,99,-80','0,20,4200,2400,150,200,600,1','0,20,4200,2400,150,200,600,-101','0,20,4200,2400,150,200,600,-80;touch nope']) {
+    assert.notEqual(command(f,'--soc-range-set',invalid).status,0,invalid);
+    assert.equal(readFileSync(file,'utf8').trim(),row,'无效操作不能破坏已保存的规则');
+  }
+  assert.equal(command(f,'--soc-range-set','100,100,1000,1000,20,10,100,0').status,0);
+  writeFileSync(f.capacity,'100');
+  assert.match(command(f,'--soc-status').stdout,/SOC_MATCH=100,100/);
+  assert.equal(command(f,'--soc-range-delete','100,100,1000,1000,20,10,100,0').status,0);
+  assert.match(command(f,'--soc-status').stdout,/SOC_MATCH=NONE/);
+  assert.match(statusOf(f),/UFCS_VOTE_MAX=9000/);
+  assert.match(statusOf(f),/VOTE_INITIAL=1000;INTERVAL_MS=100;RAISE_STEP=100;LOWER_STEP=500;CUTOFF_GAP_MV=-50/);
+  command(f,'--soc-disable');
+  assert.equal(readFileSync(file,'utf8').trim(),row,'关闭功能保留区间');
+  assert.equal(existsSync(leasePath(f)),false,'设置区间不能自行接管充电');
+});
+
+test('区间参数在真实控制循环生效：初始值、监控时间、升降步进、截止压差和上限',async t=>{
+  const f=mk(t);
+  writeFileSync(f.capacity,'10'); writeFileSync(f.volt,'4500000');
+  const row='0,20,3000,2000,200,200,100,0';
+  assert.equal(command(f,'--soc-range-set',row).status,0);
+  command(f,'--soc-enable');
+  const sleeps=join(f.base,'sleeps');
+  writeFileSync(f.shell,readFileSync(f.shell,'utf8').replaceAll('sleep "$ivl"',`printf '%s\\n' "$ivl" >> "${sleeps}"; sleep "$ivl"`));
+  startDaemon(t,f);
+  await waitFor(()=>liveGet(f,'TARGET')==='3000','区间初始 2000 后每轮 +200 升至上限 3000');
+  assert.match(readEvents(f),/START_ADAPTIVE_2000/);
+  assert.ok(readFileSync(sleeps,'utf8').trim().split('\n').every(value=>value==='0.200'),'实际休眠使用区间监控时间');
+  command(f,'--soc-range-set','0,20,4000,2000,200,200,100,-100');
+  await sleep(450);
+  assert.equal(liveGet(f,'TARGET'),'3000','区间截止压差 -100 时 4500mV 不再升流');
+  writeFileSync(f.volt,'4600000');
+  await waitFor(()=>Number(liveGet(f,'TARGET'))<3000,'区间降低步进生效');
+  assert.equal((3000-Number(liveGet(f,'TARGET')))%100,0);
+  assert.ok(Number(liveGet(f,'TARGET'))>=2700,'使用区间的 100 步进，而非通用 500');
+  writeFileSync(f.volt,'4520000'); writeFileSync(f.capacity,'21');
+  await waitFor(()=>liveGet(f,'TARGET')==='1000','未匹配区间时按通用初始值起步');
+  writeFileSync(f.capacity,'20');
+  await waitFor(()=>liveGet(f,'TARGET')==='2000','20% 仍属于第一段，重新按区间初始值起步');
+  command(f,'--soc-disable');
+  await waitFor(()=>liveGet(f,'TARGET')==='1000','关闭区间控制即时回退');
+});
+
+test('区间上限约束起步且不能绕过温控，PPS 使用通用参数，电量异常或坏规则回退',async t=>{
+  const f=mk(t);
+  command(f,'--soc-range-set','0,100,2000,9000,20,500,100,0'); command(f,'--soc-enable');
+  command(f,'--vote-initial-set','3000');
+  command(f,'--thermal-enable'); command(f,'--thermal-vote-set','500'); sampleTemperature(f,450);
+  startDaemon(t,f);
+  await waitFor(()=>liveGet(f,'TARGET')==='500','区间初始值先受区间上限和温控约束');
+  command(f,'--thermal-disable');
+  await waitFor(()=>liveGet(f,'THERMAL_STATE')==='OFF','确认温控已关闭');
+  writeFileSync(f.volt,'4470000');
+  online(f,'ufcs',false); online(f,'pps',true);
+  await waitFor(()=>liveGet(f,'PROTO')==='pps' && liveGet(f,'TARGET')==='3000','PPS 沿用通用初始值');
+  online(f,'pps',false); online(f,'ufcs',true); writeFileSync(f.volt,'4520000');
+  await waitFor(()=>liveGet(f,'PROTO')==='ufcs' && liveGet(f,'TARGET')==='2000','UFCS 区间初始值受上限 2000 约束');
+  for(const invalid of ['UNKNOWN','101','-1','']) {
+    writeFileSync(f.capacity,invalid);
+    assert.match(command(f,'--soc-status').stdout,/SOC_PERCENT=UNKNOWN.*SOC_MATCH=NONE;SOC_EFFECTIVE_VOTE_MAX=9000/);
+  }
+  const file=join(f.data,'auto-control.ufcs.soc-ranges');
+  writeFileSync(file,'corrupt');
+  assert.match(command(f,'--soc-status').stdout,/SOC_CONFIG_VALID=NO;SOC_RANGES=NONE;SOC_MATCH=NONE/);
+  assert.notEqual(command(f,'--soc-range-set','0,20,1000,1000,100,100,500,-50').status,0);
+  assert.equal(readFileSync(file,'utf8'),'corrupt','不能用新数据覆盖损坏配置');
+});
 
 test('温控默认关闭，三项设置校验边界、原子保存、重读保留，坏配置回落默认',t=>{
   const f=mk(t);
@@ -217,11 +547,58 @@ test('温控不会抬高更低目标或突破协议上限，协议切换和守�
   assert.match(command(f,'--thermal-status').stdout,/THERMAL_STATE=IDLE;THERMAL_ACTIVE=NO/);
 });
 
+test('温度伪装默认关闭，开启后写固定外壳温度并设为只读，关闭恢复可写',t=>{
+  const f=mk(t);
+  assert.match(command(f,'--faketemp-status').stdout,
+    /FAKETEMP_ENABLED=NO;FAKETEMP_VALUE_DECI=360;FAKETEMP_STATE=OFF;/);
+  // 默认关闭时不触碰节点，权限保持原样。
+  assert.equal(modeOf(f.shellTemp),'644');
+  assert.equal(command(f,'--faketemp-value-set','300').status,0);
+  assert.match(command(f,'--faketemp-status').stdout,/FAKETEMP_VALUE_DECI=300;/);
+  for (const bad of ['199','451','0','0300','abc','$((1))','12.5']) {
+    assert.equal(command(f,'--faketemp-value-set',bad).status,2,'应拒绝 '+bad);
+  }
+  assert.equal(command(f,'--faketemp-value-set').status,2);
+  assert.match(statusOf(f),/FAKETEMP_ENABLED=NO;FAKETEMP_VALUE_DECI=300;FAKETEMP_STATE=OFF;/);
+  const on=command(f,'--faketemp-enable');
+  assert.equal(on.status,0,on.stderr);
+  assert.match(on.stdout,/FAKETEMP_ENABLED=on/);
+  assert.match(command(f,'--faketemp-status').stdout,
+    /FAKETEMP_ENABLED=YES;FAKETEMP_VALUE_DECI=300;FAKETEMP_STATE=APPLIED;/);
+  assert.equal(modeOf(f.shellTemp),'444','开启后节点只读，horae 仍须能读取');
+  // 真实节点每次写入都会被内核处理；普通文件会被 > 截断，这里校验换算后的毫摄氏度。
+  assert.equal(readFileSync(f.shellTemp,'utf8').trim(),'2 30000','只读权限不能阻止 horae 读取');
+  chmodSync(f.shellTemp,0o644);
+  assert.match(command(f,'--faketemp-ensure').stdout,/FAKETEMP_STATE=APPLIED;/);
+  assert.equal(modeOf(f.shellTemp),'444');
+  const off=command(f,'--faketemp-disable');
+  assert.equal(off.status,0,off.stderr);
+  assert.match(off.stdout,/FAKETEMP_ENABLED=off/);
+  assert.match(command(f,'--faketemp-status').stdout,
+    /FAKETEMP_ENABLED=NO;FAKETEMP_VALUE_DECI=300;FAKETEMP_STATE=OFF;/);
+  assert.equal(modeOf(f.shellTemp),'666','关闭后恢复节点可写');
+});
+
+test('温度伪装设置越界时拒绝，且不改变温控状态与监测租约',t=>{
+  const f=mk(t);
+  command(f,'--thermal-enable'); command(f,'--thermal-vote-set','500');
+  for (const [option,values] of [['--faketemp-value-set',['200','450']]]) {
+    for (const value of values) assert.equal(command(f,option,value).status,0,option+' '+value);
+  }
+  assert.equal(command(f,'--faketemp-value-set','199').status,2);
+  assert.equal(command(f,'--faketemp-value-set','451').status,2);
+  // 温控读取的是电池温度节点，伪装只改外壳温度节点，两者互不干扰。
+  assert.match(command(f,'--thermal-status').stdout,/THERMAL_ENABLED=YES;THERMAL_LIMIT_C=45;THERMAL_VOTE_MA=500/);
+  assert.equal(readFileSync(f.temp,'utf8'),'340');
+  assert.equal(existsSync(leasePath(f)),false,'改伪装设置不能自行接管');
+});
+
 test('--status 未接管时报告 STOPPED、总开关默认开、UFCS/PPS 默认开与各自默认参数',t=>{
   const f=mk(t);
   const r=command(f,'--status');
   assert.equal(r.status,0,r.stderr);
   assert.equal(r.stdout.trim().split('\n').length,1);
+  assert.match(r.stdout,/FAKETEMP_ENABLED=NO;FAKETEMP_VALUE_DECI=360;FAKETEMP_STATE=OFF;/);
   assert.match(r.stdout,/CONTROL_STATE=STOPPED/);
   assert.match(r.stdout,/MONITOR_ENABLED=YES/);
   assert.match(r.stdout,/ACTIVE_PROTOCOL=NONE/);
@@ -324,7 +701,7 @@ test('--limit-set 按协议校验并持久化设定电压，互不影响',async 
   assert.match(statusOf(f),/UFCS_LIMIT_MV=4000/);
   assert.equal(command(f,'--limit-set','vooc','3900').status,2);
   assert.equal(command(f,'--limit-set','pps','3700').status,2);
-  assert.equal(command(f,'--limit-set','ufcs','4600').status,2);
+  assert.equal(command(f,'--limit-set','ufcs','4661').status,2);
   assert.equal(command(f,'--limit-set','ufcs','abc').status,2);
   assert.equal(command(f,'--limit-set','bogus','4000').status,2);
   assert.match(statusOf(f),/UFCS_LIMIT_MV=4000/);
@@ -470,10 +847,11 @@ test('--proto-disable 关闭协议后撤销限流，守护继续等待',async t=
   const r=command(f,'--proto-disable','ufcs');
   assert.equal(r.status,0,r.stderr);
   assert.match(r.stdout,/PROTO_DISABLED=UFCS/);
-  await waitFor(()=>!existsSync(leasePath(f)),'关闭协议后撤销');
+  await waitFor(()=>!existsSync(leasePath(f)) && /state=CONTROL_FINISHED_PROTOCOL_DISABLED/.test(readEvents(f)),'关闭协议后撤销并完成日志');
   assert.equal(readFileSync(join(f.u,'force_active'),'utf8'),'0');
   assert.match(readEvents(f),/state=CONTROL_FINISHED_PROTOCOL_DISABLED/);
   assert.equal(child.exitCode,null,'守护必须继续存活');
+  await waitFor(()=>liveGet(f,'REASON')==='PROTOCOL_DISABLED','原因更新',20);
   assert.equal(liveGet(f,'REASON'),'PROTOCOL_DISABLED');
 });
 
@@ -625,4 +1003,58 @@ test('未知命令返回用法并以退出码 2 结束',t=>{
   const r=command(f,'--diagnose');
   assert.equal(r.status,2);
   assert.match(r.stderr,/USAGE:/);
+});
+
+test('温度伪装联动 horae 测试模式，默认关闭不干预，重启重新应用，卸载恢复',t=>{
+  const f=mk(t);
+  command(f,'--faketemp-value-set','360');
+  assert.equal(existsSync(f.horaeLog),false,'未启用过时不得改变 horae');
+  assert.match(command(f,'--faketemp-status').stdout,/FAKETEMP_HORAE_STATE=UNKNOWN/);
+  assert.equal(command(f,'--faketemp-enable').status,0);
+  assert.equal(readFileSync(f.horaeLog,'utf8'),'horae testmode\n');
+  assert.match(command(f,'--faketemp-status').stdout,/FAKETEMP_STATE=APPLIED;FAKETEMP_HORAE_STATE=TEST_SENT/);
+  writeFileSync(join(f.base,'boot_id'),'87654321-4321-4321-4321-210987654321');
+  assert.match(command(f,'--faketemp-status').stdout,/FAKETEMP_STATE=PENDING;FAKETEMP_HORAE_STATE=UNKNOWN/);
+  assert.equal(command(f,'--faketemp-ensure').status,0);
+  assert.match(command(f,'--faketemp-status').stdout,/FAKETEMP_STATE=APPLIED;FAKETEMP_HORAE_STATE=TEST_SENT/);
+  const uninstall=join(f.base,'uninstall.sh');
+  writeFileSync(uninstall,readFileSync(join(root,'uninstall.sh'),'utf8').replaceAll('/data/adb/oplus-votable',f.data));
+  assert.equal(spawnSync('sh',[uninstall],{env:f.env}).status,0);
+  assert.match(readFileSync(f.horaeLog,'utf8'),/horae testmode false\n$/);
+  assert.equal(modeOf(f.shellTemp),'666');
+  assert.match(command(f,'--faketemp-status').stdout,/FAKETEMP_ENABLED=NO.*FAKETEMP_HORAE_STATE=NORMAL_SENT/);
+  const calls=readFileSync(f.horaeLog,'utf8');command(f,'--faketemp-ensure');
+  assert.equal(readFileSync(f.horaeLog,'utf8'),calls,'恢复成功后不反复发送恢复命令');
+});
+
+test('horae 失败或超时不得报告应用成功，恢复失败仍解锁节点并允许重试',t=>{
+  const f=mk(t);f.env.HORAETEST_EXIT='124';
+  assert.equal(command(f,'--faketemp-enable').status,3);
+  assert.match(command(f,'--faketemp-status').stdout,/FAKETEMP_STATE=PENDING;FAKETEMP_HORAE_STATE=ERROR/);
+  f.env.HORAETEST_EXIT='0';assert.equal(command(f,'--faketemp-ensure').status,0);
+  assert.equal(modeOf(f.shellTemp),'444');
+  f.env.HORAETEST_EXIT='1';assert.equal(command(f,'--faketemp-disable').status,3);
+  assert.equal(modeOf(f.shellTemp),'666','horae 恢复失败不能阻止节点解锁');
+  assert.match(command(f,'--faketemp-status').stdout,/FAKETEMP_ENABLED=NO.*FAKETEMP_HORAE_STATE=ERROR/);
+  f.env.HORAETEST_EXIT='0';assert.equal(command(f,'--faketemp-disable').status,0);
+  assert.match(command(f,'--faketemp-status').stdout,/FAKETEMP_HORAE_STATE=NORMAL_SENT/);
+});
+
+
+test('系统忽略退出参数时兼容重启 horae，确认退出后才报告恢复成功',t=>{
+  const f=mk(t);f.env.HORAETEST_STUCK='1';
+  assert.equal(command(f,'--faketemp-enable').status,0);
+  assert.equal(command(f,'--faketemp-disable').status,0);
+  assert.equal(existsSync(f.env.HORAETEST_RESTARTED),true);
+  assert.equal(modeOf(f.shellTemp),'666');
+  assert.match(command(f,'--faketemp-status').stdout,/FAKETEMP_HORAE_STATE=NORMAL_SENT/);
+});
+
+test('兼容恢复失败不能误报正常模式，仍恢复节点可写并允许重试',t=>{
+  const f=mk(t);f.env.HORAETEST_STUCK='1';f.env.HORAETEST_RESTART_FAIL='1';
+  assert.equal(command(f,'--faketemp-enable').status,0);
+  assert.equal(command(f,'--faketemp-disable').status,3);
+  assert.equal(modeOf(f.shellTemp),'666');
+  assert.match(command(f,'--faketemp-status').stdout,/FAKETEMP_HORAE_STATE=ERROR/);
+  f.env.HORAETEST_RESTART_FAIL='0';assert.equal(command(f,'--faketemp-disable').status,0);
 });

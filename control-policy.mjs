@@ -27,6 +27,7 @@ export const DEFAULT_LIMIT_MV = 4560;
 export const DEFAULT_PPS_LIMIT_MV = 4500;
 export const LIMIT_MIN_MV = 3800;
 export const LIMIT_MAX_MV = 4560;
+export const UFCS_LIMIT_MAX_MV = 4660;
 
 export const RAISE_STEP_RAW = 100;
 export const LOWER_STEP_RAW = 500;
@@ -84,9 +85,10 @@ export function clampIntervalMs(ms) {
   return clampInt(ms, INTERVAL_MS, INTERVAL_MIN_MS, INTERVAL_MAX_MS);
 }
 
-/** 设定电压夹到 3800..4560；非法值回落到默认 4560。 */
-export function clampLimitMv(mv) {
-  return clampInt(mv, DEFAULT_LIMIT_MV, LIMIT_MIN_MV, LIMIT_MAX_MV);
+/** UFCS 设定电压最高 4660，PPS 最高 4560。 */
+export function clampLimitMv(mv, protocol = 'ufcs') {
+  return clampInt(mv, protocol === 'pps' ? DEFAULT_PPS_LIMIT_MV : DEFAULT_LIMIT_MV,
+    LIMIT_MIN_MV, protocol === 'pps' ? LIMIT_MAX_MV : UFCS_LIMIT_MAX_MV);
 }
 
 /** 投票值上限夹到 1000..13500；非法值回落到默认 9000。 */
@@ -101,7 +103,7 @@ export function clampVoteMax(raw) {
  */
 export function computeNextStep(state, voltageUv, params = {}) {
   let targetRaw = state.targetRaw;
-  const limitMv = clampLimitMv(params.limitMv);
+  const limitMv = clampLimitMv(params.limitMv, params.protocol);
   const voteMax = clampVoteMax(params.voteMaxRaw);
   const raiseStep = clampRaiseStep(params.raiseStepRaw);
   const lowerStep = clampLowerStep(params.lowerStepRaw);

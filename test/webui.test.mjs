@@ -15,11 +15,16 @@ const app = readFileSync(join(dir,'webroot/app.js'),'utf8');
 const html = readFileSync(join(dir,'webroot/index.html'),'utf8');
 const prop = readFileSync(join(dir,'module.prop'),'utf8');
 
-test('UI、模块与安装包版本一致，温度控制入口及参数范围明确',()=>{
+test('UI、模块与安装包版本一致，温度控制与温度伪装入口及参数范围明确',()=>{
   const version=/^version=([^\n]+)/m.exec(prop)[1];
-  assert.equal(version,'0.8.9-thermal-control');
-  assert.match(html,/ADAPTIVE · v0\.8\.9/);
+  assert.equal(version,'0.9.12-overview-cleanup');
+  assert.match(html,/ADAPTIVE · v0\.9\.12/);
   assert.ok(readFileSync(join(dir,'build.mjs'),'utf8').includes('oplus-votable-'+version+'.zip'));
+  assert.match(html,/data-detail="pulse"/);
+  assert.match(html,/id="pulseSwitch" role="switch"/);
+  for(const [name,min,max,value] of [['Charge',1,1200,5],['Pause',0,60000,1000]]) {
+    for(const kind of ['Range','Input']) assert.match(html,new RegExp('id="pulse'+name+kind+'" min="'+min+'" max="'+max+'" step="1" value="'+value+'"'));
+  }
   assert.match(html,/data-detail="thermal"/);
   assert.match(html,/id="thermalSwitch" role="switch"/);
   for(const [name,min,max,value] of [['Limit',20,60,45],['Vote',500,5000,1000],['Gap',1,5,2]]) {
@@ -27,6 +32,19 @@ test('UI、模块与安装包版本一致，温度控制入口及参数范围明
       assert.match(html,new RegExp('id="thermal'+name+kind+'" min="'+min+'" max="'+max+'"[^>]*value="'+value+'"'));
     }
   }
+  // 温度伪装是独立入口，默认关闭，范围 20.0–45.0°C、步进 0.5。
+  assert.match(html,/data-detail="faketemp"/);
+  assert.match(html,/id="control-detail-faketemp"/);
+  assert.match(html,/id="fakeSwitch" role="switch"/);
+  assert.match(html,/id="fakeEnabled"/);
+  assert.match(html,/id="fakeTag"/);
+  assert.match(html,/id="fakeStatus"/);
+  assert.match(html,/id="fakeSaveStatus"/);
+  for(const kind of ['Range','Input']) {
+    assert.match(html,new RegExp('id="fakeValue'+kind+'" min="20" max="45"[^>]*value="36"'));
+  }
+  assert.match(html,/id="fakeValueValue"/);
+  assert.match(html,/\/proc\/shell-temp/);
   assert.doesNotMatch(html,/温度限制仍未启用/);
 });
 
@@ -296,14 +314,14 @@ test('控制首页仅提供 UFCS/PPS 双协议控制且 VOOC 不可控',()=>{
   assert.doesNotMatch(app,/startTest/);
 });
 
-test('WebUI 提供 UFCS/PPS 独立设定电压滑动条，范围 3800..4560 且双向联动',()=>{
+test('WebUI 提供独立电压滑条，UFCS 最高 4660、PPS 最高 4560 且双向联动',()=>{
   const markup=readFileSync(join(dir,'webroot/index.html'),'utf8');
   for (const k of ['UFCS','PPS']) {
     assert.match(markup,new RegExp('id="limitRange'+k+'"'));
     assert.match(markup,new RegExp('id="limitInput'+k+'"'));
     assert.match(markup,new RegExp('id="limitValue'+k+'"'));
-    assert.match(markup,new RegExp('id="limitRange'+k+'"[^>]*min="3800"[^>]*max="4560"'));
-    assert.match(markup,new RegExp('id="limitInput'+k+'"[^>]*min="3800"[^>]*max="4560"'));
+    assert.match(markup,new RegExp('id="limitRange'+k+'"[^>]*min="3800"[^>]*max="'+(k==='UFCS'?4660:4560)+'"'));
+    assert.match(markup,new RegExp('id="limitInput'+k+'"[^>]*min="3800"[^>]*max="'+(k==='UFCS'?4660:4560)+'"'));
   }
   assert.match(app,/limitRange/);
   assert.match(app,/limitInput/);
@@ -369,10 +387,35 @@ test('电流控制高级参数面板使用预定义命令，且不改动任意�
   assert.match(app,/CUTOFF_GAP_MV/);
 });
 
+test('温度伪装面板只使用预定义命令读写，且不改动温控设置',()=>{
+  const markup=readFileSync(join(dir,'webroot/index.html'),'utf8');
+  assert.match(markup,/data-detail="faketemp" aria-controls="control-detail-faketemp"/);
+  const section=markup.split('id="control-detail-faketemp"')[1].split('</section>')[0];
+  for (const id of ['fakeSaveStatus','fakeSwitch','fakeEnabled','fakeStatus',
+    'fakeValueRange','fakeValueInput','fakeValueValue','fakeNote','fakeHoraeStatus']) {
+    assert.match(section,new RegExp('id="'+id+'"'));
+  }
+  assert.match(app,/function paintFake\(/);
+  assert.match(app,/function applyFakeStatus\(/);
+  assert.match(app,/function refreshFake\(/);
+  assert.match(app,/function runFake\(/);
+  assert.match(app,/fakeDeci/);
+  assert.match(app,/--faketemp-enable/);
+  assert.match(app,/--faketemp-disable/);
+  assert.match(app,/--faketemp-value-set/);
+  assert.match(app,/FAKE_MIN = 20/);
+  assert.match(app,/FAKE_MAX = 45/);
+  assert.match(app,/FAKETEMP_ENABLED/);
+  assert.match(app,/FAKETEMP_VALUE_DECI/);
+  assert.match(app,/FAKETEMP_STATE/);
+  assert.match(app,/CONTROL_DETAILS = \['UFCS', 'PPS', 'advanced', 'thermal', 'faketemp', 'pulse'\]/);
+});
+
 test('WebUI 仅使用预定义控制命令，不接受用户输入的任意命令',()=>{
   assert.match(app,/controlStatus: 'sh ' \+ CONTROL \+ ' --status'/);
   assert.match(app,/monitorEnable: 'sh ' \+ CONTROL \+ ' --monitor-enable'/);
   assert.match(app,/monitorDisable: 'sh ' \+ CONTROL \+ ' --monitor-disable'/);
+  assert.match(app,/faketempStatus: 'sh ' \+ CONTROL \+ ' --faketemp-status'/);
   assert.match(app,/hasOwnProperty\.call\(ALLOWED_COMMANDS, action\)/);
   assert.doesNotMatch(app,/eval\(/);
   assert.doesNotMatch(app,/controlCheck|controlRun|controlStop|controlDiagnose/);
@@ -430,12 +473,12 @@ test('只读电池接口正确输出系统温度、电压及缺失值',t=>{
   assert.equal(invalid.BATTERY_CURRENT_RAW,'UNKNOWN');
 });
 
-test('首页协商卡片仅保留四项读数，温度覆盖入口已移除',()=>{
-  const ids=['negVoltage','negVoltageMax','negInputLimit','negTarget'];
-  for(const id of [...ids,'negState','negRefresh']) assert.match(html,new RegExp('id="'+id+'"'));
-  const section=html.slice(html.indexOf('aria-label="USB 输入协商和模块投票目标"'),html.indexOf('<h2>协议识别'));
-  assert.equal((section.match(/class="metric"/g)||[]).length,4);
-  assert.doesNotMatch(html,/id="neg(CurrentMax|PowerCeiling|MeasuredPower|DriverVote|BatteryCurrent|BatteryState|WiredIcl|WiredFcc)"/);
+test('概览首先显示运行概况，移除协商卡片且诊断快照仍可读取',()=>{
+  const overview=html.slice(html.indexOf('id="page-overview"'),html.indexOf('id="page-diagnostics"'));
+  assert.ok(overview.indexOf('<h2>运行概况')<overview.indexOf('class="protocol-hero"'));
+  assert.ok(overview.indexOf('class="protocol-hero"')<overview.indexOf('<h2>协议识别'));
+  assert.doesNotMatch(html,/充电器协商与限流排查|id="neg[A-Z]/);
+  assert.doesNotMatch(app,/el\('neg[A-Z]|setMetric\('neg[A-Z]|paintNegotiation/);
   assert.doesNotMatch(html,/control-detail-temperature|temperatureSwitch/);
   assert.doesNotMatch(app,/temperature\.sh|temperatureEnable|refreshTemperature/);
   assert.match(app,/negotiation: 'sh ' \+ SCRIPT \+ ' --negotiation'/);
@@ -611,7 +654,7 @@ test('单行状态信息能兼容旧多行和 SukiSU 仅返回最后一行的情
 
 
 test('多页面 WebUI：底部导航可切换概览、控制、诊断、日志',()=>{
-  for (const name of ['overview','control','diagnostics','logs']) {
+  for (const name of ['overview','control','history','diagnostics','logs']) {
     assert.match(html, new RegExp('id="page-' + name + '"'));
     assert.match(html, new RegExp('id="tab-' + name + '"'));
     assert.match(html, new RegExp('aria-controls="page-' + name + '"'));
@@ -621,7 +664,7 @@ test('多页面 WebUI：底部导航可切换概览、控制、诊断、日志',
   assert.match(app,/function switchPage\(/);
   assert.match(app,/function showControlDetail\(/);
   assert.doesNotMatch(app,/hashchange|location\.hash\s*=|history\.pushState|history\.replaceState/);
-  assert.ok(html.indexOf('id="protocolName"') < html.indexOf('id="updated"'));
+  assert.ok(html.indexOf('id="updated"') < html.indexOf('id="protocolName"'));
   assert.ok(html.indexOf('id="page-diagnostics"') < html.indexOf('id="voteList"'));
 });
 

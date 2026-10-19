@@ -18,8 +18,12 @@
     monitorEnable: 'sh ' + CONTROL + ' --monitor-enable',
     monitorDisable: 'sh ' + CONTROL + ' --monitor-disable',
     thermalStatus: 'sh ' + CONTROL + ' --thermal-status',
+    faketempStatus: 'sh ' + CONTROL + ' --faketemp-status',
+    socStatus: 'sh ' + CONTROL + ' --soc-status',
+    pulseStatus: 'sh ' + CONTROL + ' --pulse-status',
   });
   const el = id => document.getElementById(id);
+  const chargingHistory = window.OplusChargingHistory.createUI(execShell, document);
 
   let selectedEntries = [];
   let busy = false;
@@ -69,11 +73,29 @@
   let thermalBusy = false;
   let thermalReadBusy = false;
   let thermalRevision = 0;
+  const FAKE_MIN = 20;
+  const FAKE_MAX = 45;
+  // value 单位为 °C，写入脚本前换算成 0.1°C（deci）。
+  const fakeTemp = {enabled: false, value: 36, state: 'UNKNOWN', horae: 'UNKNOWN'};
+  let fakeBusy = false;
   const LIMIT_MIN = 3800;
   const LIMIT_MAX = 4560;
+  const UFCS_LIMIT_MAX = 4660;
   const VOTE_MAX_MIN = 1000;
   const VOTE_MAX_MAX = 13500;
   const PPS_VOTE_MAX_MAX = 5800;
+  const SOC_LABELS = {voteInitial: '投票初始值', intervalMs: '监控时间', raiseStep: '提升步进', lowerStep: '降低步进', cutoffGapMv: '升流截止压差'};
+  const SOC_FIELDS = [
+    {field: 'voteMax', el: 'socVoteMax', min: VOTE_MAX_MIN, max: VOTE_MAX_MAX},
+    ...Object.entries(ADV).map(([field, {el, min, max}]) => ({field, el: el.replace('adv','soc'), min, max})),
+  ];
+  const soc = {enabled: false, loaded: false, valid: true, percent: 'UNKNOWN', match: 'NONE', ranges: [], busy: false, revision: 0, reading: false, rendered: null, error: ''};
+  let editingSoc = null;
+  const PULSE = Object.freeze({
+    charge: {min: 1, max: 1200, el: 'pulseCharge', key: 'PULSE_CHARGE_S', set: '--pulse-charge-set'},
+    pause: {min: 0, max: 60000, el: 'pulsePause', key: 'PULSE_PAUSE_MS', set: '--pulse-pause-set'},
+  });
+  const pulse = {enabled: false, charge: 5, pause: 1000, ranges: [], valid: true, loaded: false, state: 'UNKNOWN', remaining: 0, percent: 'UNKNOWN', busy: false, reading: false, revision: 0, rendered: null};
 
   function showError(message) {
     const node = el('error');
@@ -81,14 +103,61 @@
     node.hidden = !message;
   }
 
+  let commandId = 0;
+  let draggingRange = null;
+
+  function execShell(command) {
+    if (!window.ksu || typeof window.ksu.exec !== 'function') {
+      throw new Error('未检测到 KernelSU/SukiSU/APatch WebUI 接口，请在模块管理器内打开。');
+    }
+    return new Promise((resolve, reject) => {
+      const name = 'oplusCommand' + commandId++;
+      let settled = false;
+      const timer = setTimeout(() => finish(new Error('后台响应超时，请刷新确认最终状态')), 30000);
+      function finish(error, value) {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        delete window[name];
+        if (error) reject(error); else resolve(value);
+      }
+      const complete = (errno, stdout, stderr) => {
+        try { finish(null, L.unwrapExecResponse({errno, stdout, stderr})); }
+        catch (error) { finish(error); }
+      };
+      try {
+        // spawn 在后台执行；单参数 exec 会让 WebView 等待整个命令结束。
+        if (typeof window.ksu.spawn === 'function') {
+          const stdout = [], stderr = [];
+          window[name] = {
+            stdout: {emit: (event, data) => { if (event === 'data') stdout.push(String(data)); }},
+            stderr: {emit: (event, data) => { if (event === 'data') stderr.push(String(data)); }},
+            emit: (event, value) => {
+              if (event === 'exit') complete(value, stdout.join('\n'), stderr.join('\n'));
+              if (event === 'error') finish(new Error(String(value?.message || value)));
+            },
+          };
+          window.ksu.spawn(command, '[]', '{}', name);
+        } else {
+          window[name] = complete;
+          const result = window.ksu.exec(command, '{}', name);
+          if (result != null) Promise.resolve(result).then(value => {
+            try { finish(null, L.unwrapExecResponse(value)); } catch (error) { finish(error); }
+          }, error => finish(error));
+        }
+      } catch (error) { finish(error); }
+    });
+  }
+
   async function run(action) {
     if (!Object.prototype.hasOwnProperty.call(ALLOWED_COMMANDS, action)) {
       throw new Error('不允许的操作');
     }
-    if (!window.ksu || typeof window.ksu.exec !== 'function') {
-      throw new Error('未检测到 KernelSU/SukiSU/APatch WebUI 接口，请在模块管理器内打开。');
-    }
-    return L.unwrapExecResponse(await window.ksu.exec(ALLOWED_COMMANDS[action]));
+    return execShell(ALLOWED_COMMANDS[action]);
+  }
+
+  function editingSetting(range, input) {
+    return draggingRange === range || document.activeElement === range || document.activeElement === input;
   }
 
   function setMetric(id, text, level) {
@@ -105,48 +174,17 @@
     return n >= 1000000 && n <= 20000000 ? (n / 1000000).toFixed(3) + ' V' : '—';
   }
 
-  function paintNegotiation() {
-    if (!negotiationRaw) return;
-    const target = protoState[activeProtocol.toLowerCase()]?.target ?? '—';
-    const state = L.analyzeNegotiation(negotiationRaw, {
-      protocolId:currentProtocol?.id,
-      activeProtocol, controlState, targetRaw:target,
-    });
-    const format = (value, unit, digits = 2) =>
-      value === null ? '—' : value.toFixed(digits) + ' ' + unit;
-    el('negState').textContent = state.online === true
-      ? 'USB 在线 · 与 ' + (currentProtocol?.name || '未知协议') + ' 状态交叉对照'
-      : state.online === false ? 'USB 未连接，已隐藏上次充电的残留读数'
-        : 'USB 在线状态未知，以下读数仅供参考';
-    setMetric('negVoltage', format(state.voltageV, 'V'));
-    setMetric('negInputLimit', format(state.inputLimitA, 'A'));
-    setMetric('negVoltageMax', format(state.maxVoltageV, 'V'));
-    setMetric('negTarget', state.online === true && controlState === 'RUNNING' && state.target !== null
-      ? String(state.target) + ' mA' : '—');
-    el('negUpdated').textContent = '只读 · 更新于 ' +
-      new Date().toLocaleTimeString('zh-CN',{hour12:false});
-  }
-
   async function refreshNegotiation() {
-    const button = el('negRefresh');
-    button.disabled = true;
     try {
       const raw = await run('negotiation');
       L.analyzeNegotiation(raw);
       negotiationRaw = raw;
       negotiationLoadedAt = Date.now();
-      paintNegotiation();
-      paintCurrentProtocol();
-    } catch (error) {
+    } catch (_) {
       negotiationRaw = null;
       negotiationLoadedAt = 0;
-      paintCurrentProtocol();
-      for (const id of ['negVoltage','negInputLimit','negVoltageMax','negTarget']) setMetric(id, '—');
-      el('negState').textContent = '协商数据不可用：' + String(error?.message || error);
-      el('negUpdated').textContent = '只读 · 读取失败';
-    } finally {
-      button.disabled = false;
     }
+    paintCurrentProtocol();
   }
 
   async function refreshProtocol() {
@@ -252,10 +290,7 @@
   }
 
   async function execControl(args) {
-    if (!window.ksu || typeof window.ksu.exec !== 'function') {
-      throw new Error('未检测到 KernelSU/SukiSU/APatch WebUI 接口，请在模块管理器内打开。');
-    }
-    return L.unwrapExecResponse(await window.ksu.exec('sh ' + CONTROL + ' ' + args));
+    return execShell('sh ' + CONTROL + ' ' + args);
   }
 
   function protoTagText(id) {
@@ -275,13 +310,13 @@
     const tag = el('protoTag' + K);
     tag.textContent = protoTagText(id);
     tag.className = 'proto-tag ' + (s.enabled ? 'on' : 'off');
-    el('targetValue' + K).textContent = voteText(s.target);
-    el('limitRange' + K).value = String(s.limitMv);
-    if (document.activeElement !== el('limitInput' + K)) el('limitInput' + K).value = String(s.limitMv);
-    el('limitValue' + K).textContent = String(s.limitMv);
-    el('voteMaxRange' + K).value = String(s.voteMax);
-    if (document.activeElement !== el('voteMaxInput' + K)) el('voteMaxInput' + K).value = String(s.voteMax);
-    el('voteMaxValue' + K).textContent = String(s.voteMax);
+    el('targetValue' + K).textContent = activeProtocol === K && pulse.state === 'PAUSED' ? 'MMI 停充' : voteText(s.target);
+    for (const [prefix, value] of [['limit', s.limitMv], ['voteMax', s.voteMax]]) {
+      const range = el(prefix + 'Range' + K), input = el(prefix + 'Input' + K);
+      if (editingSetting(range, input)) continue;
+      range.value = input.value = String(value);
+      el(prefix + 'Value' + K).textContent = String(value);
+    }
     for (const prefix of ['limitRange','limitInput','voteMaxRange','voteMaxInput','protoReset']) {
       el(prefix + K).disabled = controlBusy || s.busy;
     }
@@ -320,7 +355,7 @@
     if (controlBusy || protoState[id].busy) return;
     const K = id.toUpperCase();
     const n = Math.round(Number(raw));
-    if (!Number.isFinite(n) || n < LIMIT_MIN || n > LIMIT_MAX) {
+    if (!Number.isFinite(n) || n < LIMIT_MIN || n > (id === 'ufcs' ? UFCS_LIMIT_MAX : LIMIT_MAX)) {
       paintProto(id);
       return;
     }
@@ -376,8 +411,9 @@
   function paintAdv(field) {
     const meta = ADV[field];
     const v = advState[field];
+    if (editingSetting(el(meta.el + 'Range'), el(meta.el + 'Input'))) return;
     el(meta.el + 'Range').value = String(v);
-    if (document.activeElement !== el(meta.el + 'Input')) el(meta.el + 'Input').value = String(v);
+    el(meta.el + 'Input').value = String(v);
     el(meta.el + 'Value').textContent = String(v);
   }
 
@@ -407,7 +443,6 @@
         el(meta.el + 'Input').getAttribute('aria-label').replace('输入框','') +
         ' ' + n + '。保存于模块私有目录，重启后保留。';
       showError('');
-      await safeControlRefresh();
     } catch (error) {
       el('advSaveStatus').textContent = '保存或回读失败：' +
         String(error?.message || error) + '。请刷新页面确认最终值。';
@@ -460,6 +495,259 @@
     }
   }
 
+  function socCsv(row) {
+    return [row.start, row.end, ...SOC_FIELDS.map(meta => row[meta.field])].join(',');
+  }
+
+  function paintSoc() {
+    el('socSwitch').checked = soc.enabled;
+    el('socSwitch').disabled = soc.busy || !soc.loaded;
+    el('socSection').hidden = !soc.enabled;
+    for (const id of ['socAdd','socRangeSave','socSettingsSave','socDelete']) el(id).disabled = soc.busy || !soc.loaded || !soc.valid;
+    for (const id of ['socRangeCancel','socSettingsCancel','socStart','socEnd']) el(id).disabled = soc.busy;
+    for (const meta of SOC_FIELDS) {
+      el(meta.el + 'Range').disabled = soc.busy;
+      el(meta.el + 'Input').disabled = soc.busy;
+    }
+    el('socStatus').textContent = !soc.loaded ? '无法读取电量区间设置：' + (soc.error || '请刷新重试。')
+      : !soc.valid ? '电量区间配置不可读，暂用通用设置。'
+      : !soc.enabled ? '电量百分比投票控制已关闭，使用通用设置。'
+      : '当前电量：' + (soc.percent === 'UNKNOWN' ? '读取失败' : soc.percent + '%') + ' · ' +
+        (soc.match === 'NONE' ? '使用通用设置' : '选用 ' + soc.match.replace(',','–') + '% 区间参数');
+    const signature = JSON.stringify([soc.ranges, soc.match]);
+    if (signature === soc.rendered) return;
+    soc.rendered = signature;
+    el('socList').replaceChildren();
+    if (!soc.ranges.length) {
+      const empty = document.createElement('p');
+      empty.className = 'detail'; empty.textContent = '未添加电量区间，使用通用设置。';
+      el('socList').appendChild(empty);
+    }
+    for (const row of soc.ranges) {
+      const button = document.createElement('button');
+      button.type = 'button'; button.className = 'control-entry';
+      const body = document.createElement('span'); body.className = 'entry-body';
+      const title = document.createElement('strong');
+      title.textContent = row.start + '–' + row.end + '%' + (soc.match === row.start + ',' + row.end ? ' · 当前区间' : '');
+      const detail = document.createElement('small');
+      detail.textContent = '投票上限 ' + row.voteMax + ' mA · 初始 ' + row.voteInitial + ' mA · 监控 ' + row.intervalMs + ' ms';
+      body.append(title, detail); button.appendChild(body);
+      button.addEventListener('click', () => openSocSettings(row));
+      el('socList').appendChild(button);
+    }
+  }
+
+  function applySocStatus(data) {
+    if (!['YES','NO'].includes(data.SOC_ENABLED) || !['YES','NO'].includes(data.SOC_CONFIG_VALID)) throw new Error('电量区间响应无法识别');
+    const rows = [];
+    if (!['NONE','|'].includes(data.SOC_RANGES)) {
+      const rawRows = (data.SOC_RANGES || '').replace(/\|$/, '').split('|');
+      if (rawRows.length > 101) throw new Error('电量区间响应无效');
+      for (const raw of rawRows) {
+        const parts = raw.split(',');
+        if (parts.length !== 8 || !parts.every(v => /^-?\d{1,6}$/.test(v))) throw new Error('区间参数响应无效');
+        const values = parts.map(Number);
+        const row = {start: values[0], end: values[1]};
+        if (row.start < 0 || row.start > row.end || row.end > 100) throw new Error('电量区间响应无效');
+        SOC_FIELDS.forEach((meta, i) => {
+          if (values[i+2] < meta.min || values[i+2] > meta.max) throw new Error('区间参数响应越界');
+          row[meta.field] = values[i+2];
+        });
+        rows.push(row);
+      }
+      rows.sort((a,b) => a.start-b.start);
+      if (rows.some((row,i) => i && row.start <= rows[i-1].end)) throw new Error('电量区间响应重叠');
+    }
+    soc.enabled = data.SOC_ENABLED === 'YES'; soc.valid = data.SOC_CONFIG_VALID === 'YES';
+    soc.ranges = rows; soc.loaded = true; soc.error = '';
+    soc.percent = /^\d{1,3}$/.test(data.SOC_PERCENT || '') && Number(data.SOC_PERCENT) <= 100 ? data.SOC_PERCENT : 'UNKNOWN';
+    soc.match = rows.some(row => row.start + ',' + row.end === data.SOC_MATCH) ? data.SOC_MATCH : 'NONE';
+    paintSoc();
+  }
+
+  async function refreshSoc() {
+    if (soc.busy || soc.reading) return;
+    soc.reading = true;
+    const revision = soc.revision;
+    try {
+      const data = L.parseStatus(await run('socStatus'));
+      if (revision === soc.revision && !soc.busy) applySocStatus(data);
+    } catch (error) {
+      if (revision === soc.revision && !soc.busy) {
+        soc.loaded = false; soc.error = String(error?.message || error); paintSoc();
+      }
+    } finally { soc.reading = false; }
+  }
+
+  async function saveSoc(args, verify) {
+    if (soc.busy) return;
+    soc.busy = true; soc.revision++; paintSoc();
+    let confirmed = false;
+    try {
+      await execControl(args);
+      applySocStatus(L.parseStatus(await run('socStatus')));
+      if (!verify()) throw new Error('回读值不一致');
+      confirmed = true;
+      el('socRangeDialog').close(); el('socSettingsDialog').close();
+      showError('');
+    } catch (error) {
+      const message = '电量区间保存失败：' + String(error?.message || error);
+      el('socRangeError').textContent = message; el('socSettingsError').textContent = message;
+      showError(message);
+    } finally {
+      soc.busy = false; if (!confirmed) await refreshSoc(); paintSoc();
+    }
+  }
+
+  function openSocSettings(row) {
+    if (soc.busy || !soc.loaded || !soc.valid) return;
+    editingSoc = {...row};
+    el('socSettingsTitle').textContent = row.start + '–' + row.end + '% 区间参数';
+    el('socSettingsError').textContent = '';
+    for (const meta of SOC_FIELDS) {
+      el(meta.el + 'Input').value = el(meta.el + 'Range').value = String(row[meta.field]);
+      el(meta.el + 'Value').textContent = String(row[meta.field]);
+    }
+    el('socSettingsDialog').showModal();
+  }
+
+  async function addSocRange(event) {
+    event.preventDefault();
+    if (soc.busy) return;
+    const start = el('socStart').value.trim(); const end = el('socEnd').value.trim();
+    if (!/^\d{1,3}$/.test(start) || !/^\d{1,3}$/.test(end) || Number(start) > Number(end) || Number(end) > 100) {
+      el('socRangeError').textContent = '请输入 0–100% 范围内、起点不大于终点的整数区间。'; return;
+    }
+    if (soc.ranges.some(row => Number(start) <= row.end && Number(end) >= row.start)) {
+      el('socRangeError').textContent = '此区间与已有区间重叠，请调整起止电量。'; return;
+    }
+    const row = {start: Number(start), end: Number(end), voteMax: protoState.ufcs.voteMax, ...advState};
+    await saveSoc('--soc-range-set ' + socCsv(row), () => soc.ranges.some(saved => socCsv(saved) === socCsv(row)));
+  }
+
+  async function saveSocSettings(event) {
+    event.preventDefault();
+    if (soc.busy || !editingSoc) return;
+    const row = {...editingSoc};
+    for (const meta of SOC_FIELDS) {
+      const raw = el(meta.el + 'Input').value.trim(); const value = Number(raw);
+      if (!/^-?\d+$/.test(raw) || !Number.isInteger(value) || value < meta.min || value > meta.max) {
+        el('socSettingsError').textContent = (SOC_LABELS[meta.field] || '投票值上限') + '必须为 ' + meta.min + '–' + meta.max + ' 范围内的整数。'; return;
+      }
+      row[meta.field] = value;
+    }
+    await saveSoc('--soc-range-set ' + socCsv(row), () => soc.ranges.some(saved => socCsv(saved) === socCsv(row)));
+  }
+
+  function paintPulse() {
+    el('pulseSwitch').checked = pulse.enabled;
+    el('pulseSwitch').disabled = pulse.busy || !pulse.loaded;
+    el('pulseEnabled').textContent = pulse.enabled ? '已开启' : '已关闭';
+    el('pulseTag').textContent = pulse.enabled ? '已开启' : '已关闭';
+    const states = {OFF: '间断充电已关闭。', IDLE: '等待自动监测和 UFCS / PPS 接管。',
+      CHARGING: '正常充电阶段', PAUSED: '暂停阶段 · MMI 停充',
+      CONTINUOUS: '断开时间为 0，持续正常充电。', OUTSIDE_RANGE: '当前电量未命中所选区间，保持正常充电。',
+      CONFIG_ERROR: '电量区间配置不可读，暂不执行间断充电。', CLOCK_ERROR: '计时读取异常，恢复正常投票。',
+      WRITE_ERROR: 'MMI 或投票写入未确认，请检查控制日志。', RECOVERY_REQUIRED: 'MMI 恢复尚未确认，后台正在重试。', UNKNOWN: '状态读取失败，请刷新重试。'};
+    el('pulseStatus').textContent = (states[pulse.state] || states.UNKNOWN) +
+      (['CHARGING','PAUSED'].includes(pulse.state) ? ' · 剩余 ' + pulse.remaining + ' 毫秒' : '');
+    el('pulseStatus').className = ['WRITE_ERROR','CLOCK_ERROR','CONFIG_ERROR','RECOVERY_REQUIRED','UNKNOWN'].includes(pulse.state)
+      ? 'detail danger-text' : pulse.state === 'PAUSED' ? 'detail warn-text' : 'detail';
+    el('pulseSoc').textContent = '当前电量：' + (pulse.percent === 'UNKNOWN' ? '读取失败' : pulse.percent + '%');
+    for (const [field, meta] of Object.entries(PULSE)) {
+      const range = el(meta.el + 'Range'); const input = el(meta.el + 'Input');
+      range.disabled = input.disabled = pulse.busy || !pulse.loaded;
+      if (pulse.busy || editingSetting(range, input)) continue;
+      range.value = input.value = String(pulse[field]); el(meta.el + 'Value').textContent = String(pulse[field]);
+    }
+    for (const id of ['pulseAdd','pulseRangeSave']) el(id).disabled = pulse.busy || !pulse.loaded || !pulse.valid;
+    for (const id of ['pulseStart','pulseEnd','pulseRangeCancel']) el(id).disabled = pulse.busy;
+    const signature = JSON.stringify([pulse.ranges,pulse.busy,pulse.valid]);
+    if (signature === pulse.rendered) return;
+    pulse.rendered = signature; el('pulseRanges').replaceChildren();
+    if (!pulse.ranges.length) {
+      const note = document.createElement('p'); note.className = 'detail';
+      note.textContent = pulse.valid ? '未添加区间，对全部电量生效。' : '区间配置不可读，暂不执行间断充电。';
+      el('pulseRanges').appendChild(note);
+    }
+    for (const row of pulse.ranges) {
+      const item = document.createElement('div'); item.className = 'section-head';
+      const label = document.createElement('strong'); label.textContent = row[0] + '–' + row[1] + '%';
+      const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'button'; remove.textContent = '删除';
+      remove.setAttribute('aria-label', '删除 ' + label.textContent + ' 间断充电区间'); remove.disabled = pulse.busy || !pulse.valid;
+      remove.addEventListener('click', () => savePulse('--pulse-range-delete ' + row.join(','), () => !pulse.ranges.some(saved => saved.join(',') === row.join(','))));
+      item.append(label,remove); el('pulseRanges').appendChild(item);
+    }
+  }
+
+  function applyPulseStatus(data) {
+    if (!['YES','NO'].includes(data.PULSE_ENABLED) || !['YES','NO'].includes(data.PULSE_CONFIG_VALID)) throw new Error('间断充电响应无法识别');
+    for (const [field, meta] of Object.entries(PULSE)) {
+      const n = Number(data[meta.key]);
+      if (!Number.isInteger(n) || n < meta.min || n > meta.max) throw new Error('间断充电时间响应无效');
+      pulse[field] = n;
+    }
+    const rows = data.PULSE_RANGES === 'NONE' ? [] : (data.PULSE_RANGES || '').split(':').map(raw => {
+      if (!/^\d{1,3},\d{1,3}$/.test(raw)) throw new Error('间断电量区间响应无效');
+      const row = raw.split(',').map(Number);
+      if (row[0] > row[1] || row[1] > 100) throw new Error('间断电量区间响应越界');
+      return row;
+    });
+    rows.sort((a,b) => a[0]-b[0]);
+    if (rows.length > 101 || rows.some((row,i) => i && row[0] <= rows[i-1][1])) throw new Error('间断电量区间重叠');
+    pulse.ranges = rows; pulse.enabled = data.PULSE_ENABLED === 'YES'; pulse.valid = data.PULSE_CONFIG_VALID === 'YES';
+    pulse.state = data.PULSE_STATE || 'UNKNOWN'; pulse.loaded = true;
+    pulse.percent = /^\d{1,3}$/.test(data.PULSE_SOC || '') && Number(data.PULSE_SOC) <= 100 ? data.PULSE_SOC : 'UNKNOWN';
+    const remaining = Number(data.PULSE_REMAIN_MS);
+    pulse.remaining = Number.isSafeInteger(remaining) && remaining >= 0 && remaining <= 1200000 ? remaining : 0;
+    paintPulse();
+  }
+
+  async function refreshPulse() {
+    if (pulse.busy || pulse.reading) return;
+    pulse.reading = true; const revision = pulse.revision;
+    try {
+      const data = L.parseStatus(await run('pulseStatus'));
+      if (revision === pulse.revision && !pulse.busy) applyPulseStatus(data);
+    } catch {
+      if (revision === pulse.revision && !pulse.busy) { pulse.loaded = false; pulse.state = 'UNKNOWN'; paintPulse(); }
+    } finally { pulse.reading = false; }
+  }
+
+  async function savePulse(args, verify) {
+    if (pulse.busy) return;
+    pulse.busy = true; pulse.revision++; paintPulse();
+    el('pulseSaveStatus').textContent = '正在保存…';
+    let confirmed = false;
+    try {
+      await execControl(args); applyPulseStatus(L.parseStatus(await run('pulseStatus')));
+      if (!verify()) throw new Error('回读值不一致');
+      confirmed = true;
+      el('pulseRangeDialog').close(); el('pulseSaveStatus').textContent = '✓ 已保存并回读确认，重启后保留。'; showError('');
+    } catch (error) {
+      const text = '间断充电保存失败：' + String(error?.message || error);
+      el('pulseSaveStatus').textContent = text; el('pulseRangeError').textContent = text; showError(text);
+    } finally { pulse.busy = false; if (!confirmed) await refreshPulse(); paintPulse(); }
+  }
+
+  async function runPulse(field, raw) {
+    const meta = PULSE[field]; const n = Number(raw);
+    if (!/^\d+$/.test(String(raw)) || !Number.isInteger(n) || n < meta.min || n > meta.max) {
+      el('pulseSaveStatus').textContent = '请输入 ' + meta.min + '–' + meta.max + ' 范围内的整数。'; paintPulse(); return;
+    }
+    await savePulse(meta.set + ' ' + n, () => pulse[field] === n);
+  }
+
+  async function addPulseRange(event) {
+    event.preventDefault(); if (pulse.busy) return;
+    const raw = [el('pulseStart').value.trim(),el('pulseEnd').value.trim()]; const row = raw.map(Number);
+    if (!raw.every(v => /^\d{1,3}$/.test(v)) || row[0] > row[1] || row[1] > 100) {
+      el('pulseRangeError').textContent = '请输入 0–100% 范围内的有效整数区间。'; return;
+    }
+    if (pulse.ranges.some(old => row[0] <= old[1] && row[1] >= old[0])) { el('pulseRangeError').textContent = '此区间与已有区间重叠。'; return; }
+    await savePulse('--pulse-range-set ' + row.join(','), () => pulse.ranges.some(saved => saved.join(',') === row.join(',')));
+  }
+
   function paintThermal() {
     el('thermalSwitch').checked = thermal.enabled;
     el('thermalSwitch').disabled = thermalBusy;
@@ -483,7 +771,7 @@
       const input = el(meta.el + 'Input');
       range.disabled = thermalBusy;
       input.disabled = thermalBusy;
-      if (thermalBusy || document.activeElement === input || document.activeElement === range) continue;
+      if (thermalBusy || editingSetting(range, input)) continue;
       range.value = input.value = String(thermal[field]);
       el(meta.el + 'Value').textContent = String(thermal[field]);
     }
@@ -533,6 +821,7 @@
     thermalRevision++;
     paintThermal();
     el('thermalSaveStatus').textContent = '正在保存…';
+    let confirmed = false;
     try {
       await execControl(field === 'enabled' ? (value ? '--thermal-enable' : '--thermal-disable') : meta.set + ' ' + value);
       const saved = L.parseStatus(await run('thermalStatus'));
@@ -540,6 +829,7 @@
         throw new Error('回读值不一致');
       }
       applyThermalStatus(saved);
+      confirmed = true;
       el('thermalSaveStatus').textContent = '✓ 已保存并回读确认，重启后保留。';
       showError('');
     } catch (error) {
@@ -548,8 +838,111 @@
       showError(message);
     } finally {
       thermalBusy = false;
-      await refreshThermal();
+      if (!confirmed) await refreshThermal();
       paintThermal();
+    }
+  }
+
+  function fakeDeci(celsius) { return Math.round(celsius * 10); }
+
+  function paintFake() {
+    el('fakeSwitch').checked = fakeTemp.enabled;
+    el('fakeSwitch').disabled = fakeBusy;
+    el('fakeEnabled').textContent = fakeTemp.enabled ? '已开启' : '已关闭';
+    el('fakeTag').textContent = fakeTemp.enabled ? '已开启' : '已关闭';
+    const states = {
+      OFF: '温度伪装已关闭，外壳温度节点已恢复可写。',
+      APPLIED: '已写入固定外壳温度，节点已设为只读，保留 horae 读取权限。',
+      PENDING: '设置已开启，但温度写入、节点锁定或 horae 测试模式尚未应用成功，请重试。',
+      UNAVAILABLE: '本机不存在 /proc/shell-temp 节点，温度伪装不可用。',
+      UNKNOWN: '温度伪装状态读取失败，请刷新重试。',
+    };
+    el('fakeStatus').textContent = states[fakeTemp.state] || states.UNKNOWN;
+    el('fakeStatus').className = fakeTemp.state === 'UNAVAILABLE' || fakeTemp.state === 'UNKNOWN'
+      ? 'detail danger-text' : fakeTemp.state === 'PENDING' ? 'detail warn-text' : 'detail';
+    const horae = {TEST_SENT: '已发送开启测试模式命令', NORMAL_SENT: '已发送恢复正常模式命令',
+      ERROR: '命令执行失败或超时，请重试', UNKNOWN: '本次开机尚无执行记录'};
+    el('fakeHoraeStatus').textContent = 'horae：' + horae[fakeTemp.horae];
+    el('fakeHoraeStatus').className = fakeTemp.horae === 'ERROR' ? 'detail danger-text' : 'detail';
+    const range = el('fakeValueRange');
+    const input = el('fakeValueInput');
+    range.disabled = fakeBusy;
+    input.disabled = fakeBusy;
+    if (!fakeBusy && !editingSetting(range, input)) {
+      range.value = String(fakeTemp.value);
+      input.value = String(fakeTemp.value);
+      el('fakeValueValue').textContent = fakeTemp.value.toFixed(1);
+    }
+  }
+
+  function applyFakeStatus(data) {
+    if (!['YES', 'NO'].includes(data.FAKETEMP_ENABLED)) throw new Error('温度伪装响应无法识别');
+    fakeTemp.enabled = data.FAKETEMP_ENABLED === 'YES';
+    const deci = Number(data.FAKETEMP_VALUE_DECI);
+    if (!Number.isInteger(deci) || deci < FAKE_MIN * 10 || deci > FAKE_MAX * 10) {
+      throw new Error('伪装温度响应无效');
+    }
+    fakeTemp.value = deci / 10;
+    fakeTemp.state = data.FAKETEMP_STATE || 'UNKNOWN';
+    fakeTemp.horae = ['TEST_SENT','NORMAL_SENT','ERROR'].includes(data.FAKETEMP_HORAE_STATE)
+      ? data.FAKETEMP_HORAE_STATE : 'UNKNOWN';
+    paintFake();
+  }
+
+  async function refreshFake() {
+    if (fakeBusy) return;
+    try {
+      applyFakeStatus(L.parseStatus(await run('faketempStatus')));
+    } catch {
+      fakeTemp.state = 'UNKNOWN';
+      fakeTemp.horae = 'UNKNOWN';
+      paintFake();
+    }
+  }
+
+  async function runFake(field, raw) {
+    if (fakeBusy) return;
+    let value = raw;
+    if (field === 'enabled') {
+      value = Boolean(raw);
+    } else {
+      value = Number(raw);
+      if (!Number.isFinite(value) || value < FAKE_MIN || value > FAKE_MAX) {
+        el('fakeSaveStatus').textContent = '请输入 ' + FAKE_MIN + '–' + FAKE_MAX + ' 范围内的温度。';
+        paintFake();
+        return;
+      }
+    }
+    fakeBusy = true;
+    paintFake();
+    el('fakeSaveStatus').textContent = '正在保存…';
+    let confirmed = false;
+    try {
+      if (field === 'enabled') {
+        await execControl(value ? '--faketemp-enable' : '--faketemp-disable');
+      } else {
+        await execControl('--faketemp-value-set ' + fakeDeci(value));
+      }
+      const saved = L.parseStatus(await run('faketempStatus'));
+      const matches = field === 'enabled'
+        ? saved.FAKETEMP_ENABLED === (value ? 'YES' : 'NO')
+        : saved.FAKETEMP_VALUE_DECI === String(fakeDeci(value));
+      if (!matches) throw new Error('回读值不一致');
+      applyFakeStatus(saved);
+      if (fakeTemp.enabled && (fakeTemp.state !== 'APPLIED' || fakeTemp.horae !== 'TEST_SENT')) {
+        throw new Error('设置已保存，但温度伪装或 horae 测试模式未应用成功');
+      }
+      confirmed = true;
+      el('fakeSaveStatus').textContent = '✓ 已保存并回读确认，重启后保留。';
+      showError('');
+    } catch (error) {
+      const message = '温度伪装设置保存或回读失败：' + String(error?.message || error);
+      el('fakeSaveStatus').textContent = message;
+      showError(message);
+    } finally {
+      fakeBusy = false;
+      if (!confirmed) await refreshFake();
+      paintFake();
     }
   }
 
@@ -899,6 +1292,9 @@
     ADJUSTED: '正在按电压自适应调整。',
     THERMAL_LIMITED: '已触发温度限流，等待降温。',
     THERMAL_SENSOR_ERROR: '电池温度读取失败，正在限制投票目标。',
+    PULSE_PAUSED: '间断充电暂停阶段：MMI 已请求停充，计时结束后恢复当前区间上限。',
+    MMI_RECOVERY_REQUIRED: 'MMI 恢复尚未确认，后台正在重试。',
+    PULSE_ERROR: '间断充电计时或投票写入异常，请检查日志。',
     WAITING_PROTOCOL: '监测中：等待 UFCS / PPS 接入。',
     PROTOCOL_DISABLED: '检测到在线协议，但该协议开关已关闭，未接管。',
     UNSUPPORTED_PROTOCOL: '当前为 VOOC / SUPERVOOC，仅提供只读诊断，不进行电流控制。',
@@ -921,6 +1317,9 @@
     for (const {id} of PROTOS) paintProto(id);
     for (const field of Object.keys(ADV)) if (!advBusy[field]) paintAdv(field);
     paintThermal();
+    paintFake();
+    paintSoc();
+    paintPulse();
     el('controlLease').textContent = controlState === 'RUNNING'
       ? '已确认本模块控制进程及 ' +
         (PROTO_LABEL[activeProtocol.toLowerCase()] || activeProtocol) + ' 驱动强制状态'
@@ -935,6 +1334,8 @@
 
   async function refreshControl() {
     const revision = thermalRevision;
+    const socRevision = soc.revision;
+    const pulseRevision = pulse.revision;
     const data = L.parseStatus(await run('controlStatus'));
     if (!Object.prototype.hasOwnProperty.call(controlNames, data.CONTROL_STATE)) {
       throw new Error('控制状态响应无法识别');
@@ -949,12 +1350,11 @@
       const s = protoState[id];
       s.enabled = data[key + '_ENABLED'] === 'YES';
       const lm = Number(data[key + '_LIMIT_MV']);
-      if (Number.isFinite(lm) && lm >= LIMIT_MIN && lm <= LIMIT_MAX) s.limitMv = lm;
+      if (Number.isFinite(lm) && lm >= LIMIT_MIN && lm <= (id === 'ufcs' ? UFCS_LIMIT_MAX : LIMIT_MAX)) s.limitMv = lm;
       const vm = Number(data[key + '_VOTE_MAX']);
       const max = id === 'pps' ? PPS_VOTE_MAX_MAX : VOTE_MAX_MAX;
       if (Number.isFinite(vm) && vm >= VOTE_MAX_MIN && vm <= max) s.voteMax = vm;
-      s.target = activeProtocol === key && /^\d+$/.test(data.TARGET_RAW || '') &&
-        data.TARGET_RAW !== '0' ? data.TARGET_RAW : '—';
+      s.target = activeProtocol === key && /^[1-9]\d*$/.test(data.TARGET_RAW || '') ? data.TARGET_RAW : '—';
     }
     for (const field of Object.keys(ADV)) {
       const meta = ADV[field];
@@ -962,6 +1362,12 @@
       if (Number.isFinite(n) && n >= meta.min && n <= meta.max) advState[field] = n;
     }
     if (data.THERMAL_ENABLED && revision === thermalRevision && !thermalBusy) applyThermalStatus(data);
+    if (data.FAKETEMP_ENABLED && !fakeBusy) applyFakeStatus(data);
+    if (data.SOC_ENABLED && socRevision === soc.revision && !soc.busy) {
+      try { applySocStatus(data); }
+      catch { await refreshSoc(); }
+    }
+    if (data.PULSE_ENABLED && pulseRevision === pulse.revision && !pulse.busy) applyPulseStatus(data);
     paintControl();
   }
 
@@ -1129,8 +1535,8 @@
         setMetric('powerState', '未知');
         errors.push(String(error?.message || error));
       }
-      await refreshNegotiation();
       if (currentPage === 'diagnostics') {
+        await refreshNegotiation();
         try { await refreshVotes(); } catch (error) {
           showVotesUnavailable('投票值读取失败，请确认驱动节点可访问。');
           errors.push('投票值读取：' + String(error?.message || error));
@@ -1178,8 +1584,8 @@
 
   // 只改变当前 WebUI 的可见内容，不修改 URL/Hash 或 pushState。
   // 这样底部 Tab 与子页面切换均不堆叠历史，系统返回一次即可退出 WebUI。
-  const PAGES = ['overview', 'control', 'diagnostics', 'logs'];
-  const CONTROL_DETAILS = ['UFCS', 'PPS', 'advanced', 'thermal'];
+  const PAGES = ['overview', 'control', 'history', 'diagnostics', 'logs'];
+  const CONTROL_DETAILS = ['UFCS', 'PPS', 'advanced', 'thermal', 'faketemp', 'pulse'];
   function showControlDetail(detail) {
     controlDetail = CONTROL_DETAILS.includes(detail) ? detail : null;
     el('control-index').hidden = controlDetail !== null;
@@ -1188,11 +1594,15 @@
     }
     el('bottomNav').hidden = controlDetail !== null;
     if (controlDetail === 'thermal') refreshThermal();
+    if (controlDetail === 'faketemp') refreshFake();
+    if (controlDetail === 'UFCS') refreshSoc();
+    if (controlDetail === 'pulse') refreshPulse();
     window.scrollTo(0, 0);
   }
   function switchPage(page) {
     if (!PAGES.includes(page)) page = 'overview';
     currentPage = page;
+    document.body.dataset.page = page;
     showControlDetail(null);
     for (const name of PAGES) {
       const selected = name === page;
@@ -1202,10 +1612,12 @@
       tab.tabIndex = selected ? 0 : -1;
     }
     window.scrollTo(0, 0);
-    // 诊断首屏只用已获取的协商快照，完整目录必须手动扫描。
-    if (page === 'diagnostics') paintCurrentProtocol();
+    // 先显示缓存，再异步读取当前协议快照；完整目录仍按需扫描。
+    if (page === 'diagnostics') { paintCurrentProtocol(); refreshNegotiation(); }
     if (page === 'logs') refreshLogs();
+    if (page === 'history') chargingHistory.refresh();
   }
+  el('historyBack').addEventListener('click', () => switchPage('overview'));
   for (const [index, page] of PAGES.entries()) {
     const tab = el('tab-' + page);
     tab.addEventListener('click', () => switchPage(page));
@@ -1227,7 +1639,6 @@
   switchPage('overview');
 
   el('votableRefresh').addEventListener('click', refreshVotables);
-  el('negRefresh').addEventListener('click', refreshNegotiation);
   el('votableCategory').addEventListener('change', renderVotables);
   el('votableSearch').addEventListener('input', renderVotables);
   el('refresh').addEventListener('click', refresh);
@@ -1239,6 +1650,60 @@
   el('copyDiagnostics').addEventListener('click', copyDiagnostics);
   el('monitorSwitch').addEventListener('change', toggleMonitor);
   el('advReset').addEventListener('click', resetAdv);
+  el('pulseSwitch').addEventListener('change', () => {
+    const enabled = el('pulseSwitch').checked;
+    return savePulse(enabled ? '--pulse-enable' : '--pulse-disable', () => pulse.enabled === enabled);
+  });
+  for (const [field, meta] of Object.entries(PULSE)) {
+    el(meta.el + 'Range').addEventListener('input', () => {
+      el(meta.el + 'Input').value = el(meta.el + 'Range').value; el(meta.el + 'Value').textContent = el(meta.el + 'Range').value;
+    });
+    el(meta.el + 'Input').addEventListener('input', () => {
+      const raw = el(meta.el + 'Input').value.trim(); const n = Number(raw);
+      if (!/^\d+$/.test(raw) || n < meta.min || n > meta.max) return;
+      el(meta.el + 'Range').value = raw; el(meta.el + 'Value').textContent = raw;
+    });
+    el(meta.el + 'Range').addEventListener('change', () => runPulse(field, el(meta.el + 'Range').value));
+    el(meta.el + 'Input').addEventListener('change', () => runPulse(field, el(meta.el + 'Input').value.trim()));
+  }
+  el('pulseAdd').addEventListener('click', () => {
+    if (pulse.busy || !pulse.loaded || !pulse.valid) return;
+    el('pulseStart').value = '0'; el('pulseEnd').value = '80'; el('pulseRangeError').textContent = ''; el('pulseRangeDialog').showModal();
+  });
+  el('pulseRangeForm').addEventListener('submit', addPulseRange);
+  el('pulseRangeCancel').addEventListener('click', () => { if (!pulse.busy) el('pulseRangeDialog').close(); });
+  el('pulseRangeDialog').addEventListener('cancel', event => { if (pulse.busy) event.preventDefault(); });
+  el('socSwitch').addEventListener('change', () => {
+    const enable = el('socSwitch').checked;
+    return saveSoc(enable ? '--soc-enable' : '--soc-disable', () => soc.enabled === enable);
+  });
+  el('socAdd').addEventListener('click', () => {
+    if (soc.busy || !soc.loaded || !soc.valid) return;
+    el('socStart').value = '0'; el('socEnd').value = '20'; el('socRangeError').textContent = '';
+    el('socRangeDialog').showModal();
+  });
+  el('socRangeForm').addEventListener('submit', addSocRange);
+  el('socSettingsForm').addEventListener('submit', saveSocSettings);
+  el('socDelete').addEventListener('click', () => {
+    if (!editingSoc) return;
+    const row = {...editingSoc};
+    return saveSoc('--soc-range-delete ' + socCsv(row), () => !soc.ranges.some(saved => saved.start === row.start && saved.end === row.end));
+  });
+  for (const prefix of ['socRange','socSettings']) {
+    el(prefix + 'Cancel').addEventListener('click', () => { if (!soc.busy) el(prefix + 'Dialog').close(); });
+    el(prefix + 'Dialog').addEventListener('cancel', event => { if (soc.busy) event.preventDefault(); });
+  }
+  for (const meta of SOC_FIELDS) {
+    el(meta.el + 'Range').addEventListener('input', () => {
+      el(meta.el + 'Input').value = el(meta.el + 'Range').value;
+      el(meta.el + 'Value').textContent = el(meta.el + 'Range').value;
+    });
+    el(meta.el + 'Input').addEventListener('input', () => {
+      const raw = el(meta.el + 'Input').value.trim(); const n = Number(raw);
+      if (!/^-?\d+$/.test(raw) || n < meta.min || n > meta.max) return;
+      el(meta.el + 'Range').value = raw; el(meta.el + 'Value').textContent = raw;
+    });
+  }
   el('thermalSwitch').addEventListener('change', () => runThermal('enabled', el('thermalSwitch').checked));
   for (const [field, meta] of Object.entries(THERMAL)) {
     el(meta.el + 'Range').addEventListener('input', () => {
@@ -1254,6 +1719,20 @@
     el(meta.el + 'Range').addEventListener('change', () => runThermal(field, el(meta.el + 'Range').value));
     el(meta.el + 'Input').addEventListener('change', () => runThermal(field, el(meta.el + 'Input').value.trim()));
   }
+  el('fakeSwitch').addEventListener('change', () => runFake('enabled', el('fakeSwitch').checked));
+  el('fakeValueRange').addEventListener('input', () => {
+    el('fakeValueInput').value = el('fakeValueRange').value;
+    el('fakeValueValue').textContent = Number(el('fakeValueRange').value).toFixed(1);
+  });
+  el('fakeValueInput').addEventListener('input', () => {
+    const raw = el('fakeValueInput').value.trim();
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n < FAKE_MIN || n > FAKE_MAX) return;
+    el('fakeValueRange').value = raw;
+    el('fakeValueValue').textContent = n.toFixed(1);
+  });
+  el('fakeValueRange').addEventListener('change', () => runFake('value', el('fakeValueRange').value));
+  el('fakeValueInput').addEventListener('change', () => runFake('value', el('fakeValueInput').value.trim()));
   for (const {id, key} of PROTOS) {
     el('protoReset' + key).addEventListener('click', () => resetProto(id));
     el('protoSwitch' + key).addEventListener('change', () => toggleProto(id));
@@ -1266,7 +1745,7 @@
       const raw = el('limitInput' + key).value.trim();
       if (!/^\d+$/.test(raw)) return;
       const n = Number(raw);
-      if (n < LIMIT_MIN || n > LIMIT_MAX) return;
+      if (n < LIMIT_MIN || n > (id === 'ufcs' ? UFCS_LIMIT_MAX : LIMIT_MAX)) return;
       el('limitRange' + key).value = String(n);
       el('limitValue' + key).textContent = String(n);
     });
@@ -1307,13 +1786,26 @@
     el(meta.el + 'Input').addEventListener('change', () => runAdv(field, el(meta.el + 'Input').value));
   }
   setInterval(() => {
-    if (el('autoRefresh').checked && !document.hidden) refresh();
+    if (el('autoRefresh').checked && !document.hidden && !draggingRange) refresh();
   }, 6000);
   setInterval(() => {
+    if (currentPage === 'history' && !document.hidden) chargingHistory.refresh({automatic:true});
+  }, 200);
+  setInterval(() => {
+    if (draggingRange) return;
     if (currentPage === 'control' && controlDetail === 'thermal' && !document.hidden) return refreshThermal();
+    if (currentPage === 'control' && controlDetail === 'pulse' && !document.hidden) return refreshPulse();
   }, 1000);
   document.addEventListener('visibilitychange', () => {
+    if (document.hidden) draggingRange = null;
     if (!document.hidden && el('autoRefresh').checked) refresh();
+    if (!document.hidden && currentPage === 'history') chargingHistory.refresh();
   });
+  document.addEventListener('pointerdown', event => {
+    if (event.target?.type === 'range') draggingRange = event.target;
+  }, {passive: true});
+  for (const event of ['pointerup', 'pointercancel']) {
+    document.addEventListener(event, () => { draggingRange = null; }, {passive: true});
+  }
   refresh();
 })();

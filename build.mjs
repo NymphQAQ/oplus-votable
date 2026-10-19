@@ -14,11 +14,11 @@ const root = dirname(fileURLToPath(import.meta.url));
 const stage = mkdtempSync(join(tmpdir(), 'oplus-votable-build-'));
 const expected = [
   'module.prop','service.sh','uninstall.sh','watchdog.sh',
-  'charge-test.sh','customize.sh',
+  'charge-test.sh','customize.sh','charging-history.sh',
   'webroot/index.html','webroot/app.js','webroot/log-utils.js',
-  'webroot/log-reader.sh',
+  'webroot/log-reader.sh','webroot/charging-history.js',
 ];
-const output = join(root, 'dist', 'oplus-votable-0.8.9-thermal-control.zip');
+const output = join(root, 'dist', 'oplus-votable-0.9.12-overview-cleanup.zip');
 try {
   mkdirSync(join(stage, 'package'));
   for (const name of expected) {

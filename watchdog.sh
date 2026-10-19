@@ -1,6 +1,6 @@
 #!/system/bin/sh
 # oplus-votable - 本模块控制租约守护。
-# 唯一职责：发现本模块测试租约残留时调用 charge-test.sh --recover 撤销自有强制投票。
+# 发现本模块控制租约或 MMI 停充记录残留时，请求撤销自有投票并恢复 MMI。
 # 唯一文件写入：私有数据目录下的 events.log/锁目录。
 set -u
 umask 077
@@ -84,7 +84,7 @@ MODDIR="${0%/*}"
 while :; do
   # 仅当本模块存在测试租约时，调用受固件/所有权保护的退出请求；
   # 该请求通过 charge-test.sh 撤销本模块自己的强制投票，不写其它任何节点。
-  if [ -f "$DATA_DIR/active-test.lease" ] && [ -f "$MODDIR/charge-test.sh" ]; then
+  if { [ -f "$DATA_DIR/active-test.lease" ] || [ -f "$DATA_DIR/pulse-mmi.lease" ]; } && [ -f "$MODDIR/charge-test.sh" ]; then
     sh "$MODDIR/charge-test.sh" --recover >/dev/null 2>&1 || :
   fi
   sleep "$INTERVAL"

@@ -10,7 +10,7 @@ import {
   INITIAL_RAW, INITIAL_MIN_RAW, INITIAL_MAX_RAW,
   DEFAULT_VOTE_MAX_RAW, DEFAULT_PPS_VOTE_MAX_RAW, PPS_VOTE_MAX_MAX_RAW,
   VOTE_MAX_MIN_RAW, VOTE_MAX_MAX_RAW,
-  DEFAULT_LIMIT_MV, DEFAULT_PPS_LIMIT_MV, LIMIT_MIN_MV, LIMIT_MAX_MV,
+  DEFAULT_LIMIT_MV, DEFAULT_PPS_LIMIT_MV, LIMIT_MIN_MV, LIMIT_MAX_MV, UFCS_LIMIT_MAX_MV,
   RAISE_STEP_RAW, LOWER_STEP_RAW, RAISE_STEP_MIN_RAW, RAISE_STEP_MAX_RAW,
   LOWER_STEP_MIN_RAW, LOWER_STEP_MAX_RAW,
   CUTOFF_GAP_MV, CUTOFF_GAP_MIN_MV, CUTOFF_GAP_MAX_MV,
@@ -40,6 +40,7 @@ test('多协议与高级参数常量与用户设定一致',()=>{
   assert.equal(DEFAULT_PPS_LIMIT_MV,4500);
   assert.equal(LIMIT_MIN_MV,3800);
   assert.equal(LIMIT_MAX_MV,4560);
+  assert.equal(UFCS_LIMIT_MAX_MV,4660);
   assert.equal(RAISE_STEP_RAW,100);
   assert.equal(LOWER_STEP_RAW,500);
   assert.equal(RAISE_STEP_MIN_RAW,10);
@@ -89,10 +90,12 @@ test('各高级参数被夹到合法区间，非法值回落默认',()=>{
   assert.equal(clampCutoffGapMv('abc'),-50);
 });
 
-test('设定电压被夹到 3800..4560，投票上限被夹到 1000..13500',()=>{
+test('UFCS 电压最高 4660、PPS 最高 4560，投票上限夹到 1000..13500',()=>{
   assert.equal(clampLimitMv(4000),4000);
   assert.equal(clampLimitMv(3700),3800);
-  assert.equal(clampLimitMv(4600),4560);
+  assert.equal(clampLimitMv(4600),4600);
+  assert.equal(clampLimitMv(4700),4660);
+  assert.equal(clampLimitMv(4660,'pps'),4560);
   assert.equal(clampLimitMv('abc'),4560);
   assert.equal(clampVoteMax(12000),12000);
   assert.equal(clampVoteMax(500),1000);
@@ -182,6 +185,7 @@ test('charge-test.sh 常量与算法模型保持一致',()=>{
   assert.match(s,/^DEFAULT_PPS_LIMIT_MV=4500$/m);
   assert.match(s,/^LIMIT_MIN_MV=3800$/m);
   assert.match(s,/^LIMIT_MAX_MV=4560$/m);
+  assert.match(s,/^UFCS_LIMIT_MAX_MV=4660$/m);
   assert.match(s,/control_proto\(\) \{ case "\$1" in ufcs\|pps\)/);
   assert.match(s,/\bUFCS_CURR\b/);
   assert.match(s,/\bVOOC_CURR\b/);
@@ -211,6 +215,22 @@ test('charge-test.sh 常量与算法模型保持一致',()=>{
   assert.match(s,/--raise-step-set/);
   assert.match(s,/--lower-step-set/);
   assert.match(s,/--cutoff-gap-set/);
+  // 温度伪装：独立通路，节点写毫摄氏度，写入后设为只读。
+  assert.match(s,/^FTENF="\$D\/auto-control\.fake-temp-enabled"$/m);
+  assert.match(s,/^FTVALF="\$D\/auto-control\.fake-temp-deci"$/m);
+  assert.match(s,/^SHELL_TEMP='\/proc\/shell-temp'$/m);
+  assert.match(s,/^DEFAULT_FAKETEMP=360$/m);
+  assert.match(s,/^FAKETEMP_MIN=200$/m);
+  assert.match(s,/^FAKETEMP_MAX=450$/m);
+  assert.match(s,/milli=\$\(\( \$\(faketemp_value\) \* 100 \)\)/);
+  assert.match(s,/chmod 0444 "\$SHELL_TEMP"/);
+  assert.match(s,/chmod 0666 "\$SHELL_TEMP"/);
+  assert.match(s,/--faketemp-enable/);
+  assert.match(s,/--faketemp-disable/);
+  assert.match(s,/--faketemp-value-set/);
+  assert.match(s,/--faketemp-ensure/);
+  assert.match(s,/--faketemp-status/);
+  assert.match(s,/FAKETEMP_ENABLED/);
   assert.match(s,/--recover/);
   assert.match(s,/active-test\.lease/);
   assert.match(s,/oplus_mms\/\$1\/data/);
@@ -229,6 +249,8 @@ test('service.sh 按总开关拉起常驻控制守护，watchdog 只负责租约
   const svc=readFileSync(service,'utf8');
   const wd=readFileSync(guard,'utf8');
   assert.match(svc,/--monitor-ensure/);
+  // /proc 在重启后重建，需重新写入并将伪装节点设为只读。
+  assert.match(svc,/--faketemp-ensure/);
   assert.doesNotMatch(svc,/charge-test\.sh" --run/);
   assert.match(wd,/charge-test\.sh" --recover/);
   assert.match(wd,/UFCS_CURR/);

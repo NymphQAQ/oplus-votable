@@ -1,7 +1,7 @@
 id=oplus-votable
 name=oplus-votable
-version=0.8.9-thermal-control
-versionCode=36
+version=0.9.12-overview-cleanup
+versionCode=49
 author=神之飞雪
-description=UFCS/PPS 自适应电流投票，VOOC 只读诊断。新增真实电池温度控制，默认关闭；温度上限默认 45°C，限流值默认 1000mA（500–5000），恢复温差默认 2°C（1–5）。支持滑动和输入调节，超温禁止升流，降温逐步恢复，读温失败保守限流。
+description=间断充电采用 MMI 停充后恢复，从当前区间上限起步并受温控限制，带自有停充异常恢复。浅色统计页、电量圆环与功率、电量、温度、电压四张独立曲线，支持范围缩放、触摸选点、峰谷保留及双电芯显示开关；后台目标每 0.2 秒记录，实时与历史数据本地保存。UFCS/PPS 自适应投票，支持 UFCS 电量区间独立参数及温度限制；温度伪装联动 horae 测试模式。
 hasWebUi=true
