@@ -17,8 +17,11 @@ import {
   INTERVAL_MS, INTERVAL_MIN_MS, INTERVAL_MAX_MS,
   initialSession, shouldControl,
   clampInitialRaw, clampRaiseStep, clampLowerStep, clampCutoffGapMv,
-  clampIntervalMs, clampLimitMv, clampVoteMax, computeNextStep,
+  clampIntervalMs, clampLimitMv, clampVoteMax, computeNextStep as nextWithDefaults,
 } from '../control-policy.mjs';
+
+// 固定旧配置验证算法；默认值契约独立检查。
+const computeNextStep=(state,voltage,params={})=>nextWithDefaults(state,voltage,{voteMaxRaw:9000,lowerStepRaw:500,earlyGapMv:0,earlyStepMa:0,...params});
 
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const shell = join(root,'charge-test.sh');
@@ -28,21 +31,21 @@ const guard = join(root,'watchdog.sh');
 test('多协议与高级参数常量与用户设定一致',()=>{
   assert.deepEqual(PROTOCOLS,['ufcs','pps']);
   assert.equal(VOTE_MIN_RAW,1000);
-  assert.equal(INITIAL_RAW,1000);
+  assert.equal(INITIAL_RAW,2000);
   assert.equal(INITIAL_MIN_RAW,1000);
   assert.equal(INITIAL_MAX_RAW,10000);
-  assert.equal(DEFAULT_VOTE_MAX_RAW,9000);
-  assert.equal(DEFAULT_PPS_VOTE_MAX_RAW,5000);
+  assert.equal(DEFAULT_VOTE_MAX_RAW,10900);
+  assert.equal(DEFAULT_PPS_VOTE_MAX_RAW,5800);
   assert.equal(PPS_VOTE_MAX_MAX_RAW,5800);
   assert.equal(VOTE_MAX_MIN_RAW,1000);
   assert.equal(VOTE_MAX_MAX_RAW,13500);
   assert.equal(DEFAULT_LIMIT_MV,4560);
-  assert.equal(DEFAULT_PPS_LIMIT_MV,4500);
+  assert.equal(DEFAULT_PPS_LIMIT_MV,4460);
   assert.equal(LIMIT_MIN_MV,3800);
   assert.equal(LIMIT_MAX_MV,4560);
   assert.equal(UFCS_LIMIT_MAX_MV,4660);
   assert.equal(RAISE_STEP_RAW,100);
-  assert.equal(LOWER_STEP_RAW,500);
+  assert.equal(LOWER_STEP_RAW,1000);
   assert.equal(RAISE_STEP_MIN_RAW,10);
   assert.equal(RAISE_STEP_MAX_RAW,500);
   assert.equal(LOWER_STEP_MIN_RAW,100);
@@ -56,7 +59,7 @@ test('多协议与高级参数常量与用户设定一致',()=>{
 });
 
 test('新会话从投票初始值起步',()=>{
-  assert.deepEqual(initialSession(),{targetRaw:1000});
+  assert.deepEqual(initialSession(),{targetRaw:2000});
   assert.deepEqual(initialSession(3000),{targetRaw:3000});
   assert.deepEqual(initialSession(99999),{targetRaw:10000});
   assert.deepEqual(initialSession(10),{targetRaw:1000});
@@ -74,11 +77,11 @@ test('各高级参数被夹到合法区间，非法值回落默认',()=>{
   assert.equal(clampInitialRaw(5000),5000);
   assert.equal(clampInitialRaw(500),1000);
   assert.equal(clampInitialRaw(20000),10000);
-  assert.equal(clampInitialRaw('abc'),1000);
+  assert.equal(clampInitialRaw('abc'),2000);
   assert.equal(clampRaiseStep(200),200);
   assert.equal(clampRaiseStep(5),10);
   assert.equal(clampRaiseStep(5000),500);
-  assert.equal(clampLowerStep(undefined),500);
+  assert.equal(clampLowerStep(undefined),1000);
   assert.equal(clampLowerStep(70),100);
   assert.equal(clampLowerStep(2000),1000);
   assert.equal(clampIntervalMs(50),50);
@@ -100,7 +103,7 @@ test('UFCS 电压最高 4660、PPS 最高 4560，投票上限夹到 1000..13500'
   assert.equal(clampVoteMax(12000),12000);
   assert.equal(clampVoteMax(500),1000);
   assert.equal(clampVoteMax(20000),13500);
-  assert.equal(clampVoteMax('abc'),9000);
+  assert.equal(clampVoteMax('abc'),10900);
 });
 
 test('电压低于 设定值+截止压差 时按提升步进上升（默认 -50mV、步进 100）',()=>{
@@ -149,19 +152,27 @@ test('参数可调：设定值、投票上限、步进与截止压差都改变�
   assert.equal(computeNextStep({targetRaw:13000},4_400_000,{voteMaxRaw:13500}).targetRaw,13100);
 });
 
-test('非法电压读数不改变投票值',()=>{
-  for (const bad of [NaN,undefined,null,'',Infinity,0,-1]) {
+test('非法电压读数保守限流，温控已经限制的更低值不被抬高',()=>{
+  for (const bad of [NaN,undefined,null,'',Infinity,0,-1,999999,20000001]) {
     const r=computeNextStep({targetRaw:2000},bad);
-    assert.equal(r.targetRaw,2000);
+    assert.equal(r.targetRaw,1000);
     assert.equal(r.raised,false);
-    assert.equal(r.lowered,false);
+    assert.equal(r.lowered,true);
+    assert.equal(computeNextStep({targetRaw:500},bad).targetRaw,500);
   }
+});
+
+test('调度迟到补齐降流步数并限制到底线，升流仍只有一个步进',()=>{
+  assert.equal(computeNextStep({targetRaw:5000},4588000,{intervalMs:50,elapsedMs:625}).targetRaw,1000);
+  assert.equal(computeNextStep({targetRaw:5000},4588000,{intervalMs:50,elapsedMs:115}).targetRaw,4000);
+  assert.equal(computeNextStep({targetRaw:2000},4400000,{intervalMs:50,elapsedMs:625}).targetRaw,2100);
+  assert.equal(computeNextStep({targetRaw:1100},4588000,{intervalMs:50,elapsedMs:1e12}).targetRaw,1000);
 });
 
 test('charge-test.sh 常量与算法模型保持一致',()=>{
   const s=readFileSync(shell,'utf8');
   assert.match(s,/^VOTE_MIN=1000$/m);
-  assert.match(s,/^DEFAULT_INITIAL=1000$/m);
+  assert.match(s,/^DEFAULT_INITIAL=2000$/m);
   assert.match(s,/^INITIAL_MIN=1000$/m);
   assert.match(s,/^INITIAL_MAX=10000$/m);
   assert.match(s,/^DEFAULT_INTERVAL=100$/m);
@@ -170,19 +181,19 @@ test('charge-test.sh 常量与算法模型保持一致',()=>{
   assert.match(s,/^DEFAULT_RAISE_STEP=100$/m);
   assert.match(s,/^RAISE_STEP_MIN=10$/m);
   assert.match(s,/^RAISE_STEP_MAX=500$/m);
-  assert.match(s,/^DEFAULT_LOWER_STEP=500$/m);
+  assert.match(s,/^DEFAULT_LOWER_STEP=1000$/m);
   assert.match(s,/^LOWER_STEP_MIN=100$/m);
   assert.match(s,/^LOWER_STEP_MAX=1000$/m);
   assert.match(s,/^DEFAULT_GAP=-50$/m);
   assert.match(s,/^GAP_MIN=-100$/m);
   assert.match(s,/^GAP_MAX=0$/m);
-  assert.match(s,/^DEFAULT_VOTE_MAX=9000$/m);
-  assert.match(s,/^DEFAULT_PPS_VOTE_MAX=5000$/m);
+  assert.match(s,/^DEFAULT_VOTE_MAX=10900$/m);
+  assert.match(s,/^DEFAULT_PPS_VOTE_MAX=5800$/m);
   assert.match(s,/^PPS_VOTE_MAX_MAX=5800$/m);
   assert.match(s,/^VOTE_MAX_MIN=1000$/m);
   assert.match(s,/^VOTE_MAX_MAX=13500$/m);
   assert.match(s,/^DEFAULT_LIMIT_MV=4560$/m);
-  assert.match(s,/^DEFAULT_PPS_LIMIT_MV=4500$/m);
+  assert.match(s,/^DEFAULT_PPS_LIMIT_MV=4460$/m);
   assert.match(s,/^LIMIT_MIN_MV=3800$/m);
   assert.match(s,/^LIMIT_MAX_MV=4560$/m);
   assert.match(s,/^UFCS_LIMIT_MAX_MV=4660$/m);
@@ -205,11 +216,8 @@ test('charge-test.sh 常量与算法模型保持一致',()=>{
   assert.match(s,/--proto-enable/);
   assert.match(s,/--proto-disable/);
   assert.match(s,/auto-control\.%s\.%s/);
-  assert.match(s,/proto_config "\$1" enabled/);
   assert.match(s,/--limit-set/);
-  assert.match(s,/proto_config "\$1" limit-mv/);
   assert.match(s,/--vote-max-set/);
-  assert.match(s,/proto_config "\$1" vote-max/);
   assert.match(s,/--vote-initial-set/);
   assert.match(s,/--interval-set/);
   assert.match(s,/--raise-step-set/);
@@ -222,7 +230,7 @@ test('charge-test.sh 常量与算法模型保持一致',()=>{
   assert.match(s,/^DEFAULT_FAKETEMP=360$/m);
   assert.match(s,/^FAKETEMP_MIN=200$/m);
   assert.match(s,/^FAKETEMP_MAX=450$/m);
-  assert.match(s,/milli=\$\(\( \$\(faketemp_value\) \* 100 \)\)/);
+  assert.match(s,/milli=\$\(\( \$1 \* 100 \)\)/);
   assert.match(s,/chmod 0444 "\$SHELL_TEMP"/);
   assert.match(s,/chmod 0666 "\$SHELL_TEMP"/);
   assert.match(s,/--faketemp-enable/);

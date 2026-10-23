@@ -49,6 +49,28 @@ number() {
   [ "$raw" -ge "$2" ] && [ "$raw" -le "$3" ] && value="$raw"
   return 0
 }
+vote_now() {
+  vote=''; lease=''; lb=''; ls=''; lp=''; lt=''; proto=''; extra=''
+  [ -f "$D/active-test.lease" ] && [ ! -L "$D/active-test.lease" ] || return 0
+  IFS= read -r lease < "$D/active-test.lease" || :
+  read -r lb ls lp lt proto extra <<EOF
+$lease
+EOF
+  [ "$lb" = "$boot" ] && uint "$ls" && uint "$lp" && [ "${#lp}" -le 9 ] && [ "$lp" -gt 1 ] &&
+    uint "$lt" && [ "${#lt}" -le 5 ] && [ "$lt" -le 20000 ] && [ -z "$extra" ] && kill -0 "$lp" 2>/dev/null || return 0
+  case "$proto" in
+    ufcs) node='/proc/oplus-votable/UFCS_CURR';;
+    pps) node='/proc/oplus-votable/PPS_CURR';;
+    *) return 0;;
+  esac
+  number "$node/force_active" 0 1; [ "$value" = 1 ] || return 0
+  number "$node/force_val" 0 20000; [ "$value" = "$lt" ] || return 0
+  candidate_vote="$value"; current_lease=''
+  IFS= read -r current_lease < "$D/active-test.lease" || :
+  number "$node/force_active" 0 1
+  [ "$value" != 1 ] || [ "$lease" != "$current_lease" ] || vote="$candidate_vote"
+  return 0
+}
 running() {
   [ -f "$K/owner" ] && [ ! -L "$K" ] && [ ! -L "$K/owner" ] || return 1
   owner=''; IFS= read -r owner < "$K/owner" || :
@@ -122,8 +144,9 @@ sample() {
     if [ "$current" -ge -100000 ] && [ "$current" -le 100000 ]; then current=$((current * 1000)); else current=''; fi
   fi
   elapsed=$((now - started))
+  vote_now
   [ ! -L "$H/$id.csv" ] && [ ! -L "$H/.active" ] && [ ! -L "$H/.active.tmp" ] || return 1
-  printf '%s,%s,%s,%s,%s,%s\n' "$epoch" "$elapsed" "$soc" "$temp" "$voltage" "$current" >> "$H/$id.csv" || return 1
+  printf '%s,%s,%s,%s,%s,%s,%s\n' "$epoch" "$elapsed" "$soc" "$temp" "$voltage" "$current" "$vote" >> "$H/$id.csv" || return 1
   count=$((count + 1)); last_ms="$now"
   save_meta ACTIVE || return 1
 }
@@ -234,10 +257,30 @@ case "$MODE" in
       bounds=YES
     fi
     printf 'HISTORY_ID=%s;HISTORY_TOTAL=%s;HISTORY_DATA_B64=' "$2" "$total"
-    # 按真实时间分桶保留四项曲线的极值；只读取快照内完整行，原始 CSV 不变。
+    # 全程峰值独立于显示窗口；五项曲线分桶保留极值，只读快照内完整行。
     awk -v file="$file" -v n="$total" -v lo="$from" -v hi="$to" -v bounds="$bounds" -v extent="$extent" '
-      function in_window(line) {
-        return split(line,a,",")==6 && a[2]~/^[0-9]+$/ && length(a[2])<=15 && a[2]>=lo && a[2]<=hi
+      function valid(value,low,high,optional) {
+        return (optional && value=="") || (value~/^-?[0-9]+$/ && length(value)<=16 && value+0>=low && value+0<=high)
+      }
+      function valid_row(line,fields) {
+        fields=split(line,a,",")
+        return (fields==6 || fields==7) && valid(a[1],1,999999999999,0) && valid(a[2],0,999999999999999,0) &&
+          valid(a[3],0,100,1) && valid(a[4],-500,1500,1) && valid(a[5],1000000,20000000,1) &&
+          valid(a[6],-100000000,100000000,1) && (fields==6 || valid(a[7],0,20000,1))
+      }
+      function peak(metric,value) {
+        if (value!="" && (!(metric in peaks) || value+0>peaks[metric])) peaks[metric]=value+0
+      }
+      function all_peaks(amps) {
+        peak("soc",a[3]);peak("temp",a[4]);peak("voltage",a[5]);peak("vote",a[7])
+        amps=a[6]+0;if (amps<0) amps=-amps
+        if (a[5]!="" && a[6]!="") peak("power",a[5]*amps)
+      }
+      function print_peaks(j,keys) {
+        split("soc temp voltage power vote",keys," ")
+        printf "MAX"
+        for (j=1;j<=5;j++) {printf ",";if (keys[j] in peaks) printf "%.0f",peaks[keys[j]]}
+        printf "\n"
       }
       function extremum(bucket,metric,value,idx,line, key) {
         if (value=="") return
@@ -246,12 +289,14 @@ case "$MODE" in
         if (!(key in maxv) || value+0>maxv[key]) {maxv[key]=value+0;maxi[key]=idx;maxrow[key]=line}
       }
       function bucket_point(idx,line, bucket,amps) {
-        bucket=int((a[2]-start)*149/span)
+        bucket=int((a[2]-start)*108/span)
         if (bucket<0) bucket=0
-        if (bucket>148) bucket=148
+        if (bucket>107) bucket=107
         extremum(bucket,"soc",a[3],idx,line)
         extremum(bucket,"temp",a[4],idx,line)
         extremum(bucket,"voltage",a[5],idx,line)
+        extremum(bucket,"vote",a[7],idx,line)
+        if (a[7]=="" && !(bucket in gapidx)) {gapidx[bucket]=idx;gaprow[bucket]=line}
         amps=a[6]+0;if (amps<0) amps=-amps
         if (a[5]!="" && a[6]!="") extremum(bucket,"power",a[5]*amps,idx,line)
       }
@@ -259,22 +304,26 @@ case "$MODE" in
         if (extent>hi) extent=hi
         size=0;start=lo;span=extent-lo+1;if (span<1) span=1
         for (i=1;i<=n && (getline line < file)>0;i++) {
-          if (in_window(line)) {
+          if (!valid_row(line)) continue
+          all_peaks()
+          if (a[2]>=lo && a[2]<=hi) {
             if (!size) {first=i;firstrow=line;if (bounds!="YES") start=a[2]+0}
             last=i;lastrow=line;end=a[2]+0;size++
             if (size<=1201) small[size]=line
             if (bounds=="YES") bucket_point(i,line)
-          } else if (a[2]~/^[0-9]+$/ && a[2]+0>hi) break
+          }
         }
         close(file)
+        print_peaks()
         if (size<=1201) {for (i=1;i<=size;i++) print small[i];exit}
         if (bounds!="YES") {
           span=end-start+1
-          for (i=1;i<=n && (getline line < file)>0;i++) if (in_window(line)) bucket_point(i,line)
+          for (i=1;i<=n && (getline line < file)>0;i++) if (valid_row(line) && a[2]>=lo && a[2]<=hi) bucket_point(i,line)
           close(file)
         }
         keep[first]=firstrow;keep[last]=lastrow
         for (key in mini) {keep[mini[key]]=minrow[key];keep[maxi[key]]=maxrow[key]}
+        for (key in gapidx) keep[gapidx[key]]=gaprow[key]
         for (i=1;i<=n;i++) if (i in keep) print keep[i]
       }
     ' | base64 | tr -d '\r\n'

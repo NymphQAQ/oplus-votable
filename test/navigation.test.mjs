@@ -19,7 +19,7 @@ function mockElement(id='') {
   return {
     id, hidden:false, disabled:false, checked:false, open:false, value:'', textContent:'',
     className:'', dataset:{}, style:{}, tabIndex:0, children:[],
-    clientWidth:360, clientHeight:id.startsWith('historyCanvas-')?190:420,
+    clientWidth:360, clientHeight:id==='historyCanvas'?300:420,
     getBoundingClientRect() { return {left:0,width:this.clientWidth}; },
     setPointerCapture() {},
     getContext() {
@@ -60,7 +60,7 @@ function openWebUi(settings={},onSet,onCommand,bridge,storage=new Map()) {
       map.get(id).max=/max="([^"]*)"/.exec(tag)?.[1] || '';
     }
   }
-  const entries=['UFCS','PPS','advanced','thermal','pulse'].map(id=>{
+  const entries=['UFCS','PPS','advanced','thermal','faketemp','pulse','cv','handoff'].map(id=>{
     const n=mockElement();n.dataset.detail=id;return n;
   });
   const backs=entries.map(()=>mockElement());
@@ -91,11 +91,12 @@ function openWebUi(settings={},onSet,onCommand,bridge,storage=new Map()) {
       const response=await onCommand?.(cmd);
       if(response !== undefined) return response;
       if(cmd.includes('--votables')) {scans++;return 'VOTABLES_UNAVAILABLE';}
-      const setter=/--(vote-initial|interval|raise-step|lower-step|cutoff-gap|thermal-limit|thermal-vote|thermal-gap)-set (-?\d+)$/.exec(cmd);
+      const setter=/--(vote-initial|interval|raise-step|lower-step|cutoff-gap|early-gap|early-step|thermal-limit|thermal-vote|thermal-gap|cv-start|cv-offset|cv-band|cv-raise|cv-lower|cv-wait|cv-fast-gap)-set (-?\d+)$/.exec(cmd);
       if(setter) {
         const keys={'vote-initial':'VOTE_INITIAL',interval:'INTERVAL_MS',
-          'raise-step':'RAISE_STEP','lower-step':'LOWER_STEP','cutoff-gap':'CUTOFF_GAP_MV',
-          'thermal-limit':'THERMAL_LIMIT_C','thermal-vote':'THERMAL_VOTE_MA','thermal-gap':'THERMAL_GAP_C'};
+          'raise-step':'RAISE_STEP','lower-step':'LOWER_STEP','cutoff-gap':'CUTOFF_GAP_MV','early-gap':'EARLY_GAP_MV','early-step':'EARLY_STEP_MA',
+          'thermal-limit':'THERMAL_LIMIT_C','thermal-vote':'THERMAL_VOTE_MA','thermal-gap':'THERMAL_GAP_C',
+          'cv-start':'CV_START_SOC','cv-offset':'CV_OFFSET_MV','cv-band':'CV_BAND_MV','cv-raise':'CV_RAISE_MA','cv-lower':'CV_LOWER_MA','cv-wait':'CV_WAIT_MS','cv-fast-gap':'CV_FAST_GAP_MV'};
         writes++;
         await onSet?.(setter[1],setter[2]);
         settings[keys[setter[1]]]=setter[2];
@@ -138,15 +139,30 @@ function openWebUi(settings={},onSet,onCommand,bridge,storage=new Map()) {
         writes++;await onSet?.('faketemp-enabled');
         const enabled=cmd.endsWith('--faketemp-enable');
         settings.FAKETEMP_ENABLED=enabled?'YES':'NO';
+        settings.FAKETEMP_ADAPTIVE_ENABLED='NO';
         settings.FAKETEMP_STATE=enabled?'APPLIED':'OFF';
         settings.FAKETEMP_HORAE_STATE=enabled?'TEST_SENT':'NORMAL_SENT';return 'FAKETEMP_SAVED';
+      }
+      if(/--faketemp-adaptive-(enable|disable)$/.test(cmd)) {
+        writes++;await onSet?.('faketemp-adaptive');
+        const enabled=cmd.endsWith('--faketemp-adaptive-enable');
+        settings.FAKETEMP_ADAPTIVE_ENABLED=enabled?'YES':'NO';settings.FAKETEMP_ENABLED='NO';
+        settings.FAKETEMP_STATE=enabled?'APPLIED':'OFF';settings.FAKETEMP_HORAE_STATE=enabled?'TEST_SENT':'NORMAL_SENT';
+        settings.FAKETEMP_REAL_DECI='400';settings.FAKETEMP_TARGET_DECI=String(400-Number(settings.FAKETEMP_OFFSET_C??5)*10);
+        return 'FAKETEMP_SAVED';
+      }
+      const fakeOffset=/--faketemp-offset-set (\d+)$/.exec(cmd);
+      if(fakeOffset) {
+        writes++;await onSet?.('faketemp-offset',fakeOffset[1]);
+        settings.FAKETEMP_OFFSET_C=fakeOffset[1];settings.FAKETEMP_TARGET_DECI=String(400-Number(fakeOffset[1])*10);
+        return 'FAKETEMP_SAVED';
       }
       const fakeSetter=/--faketemp-value-set (\d+)$/.exec(cmd);
       if(fakeSetter) {
         writes++;await onSet?.('faketemp-value',fakeSetter[1]);
         settings.FAKETEMP_VALUE_DECI=fakeSetter[1];return 'FAKETEMP_SAVED';
       }
-      const fakeStatus=['FAKETEMP_ENABLED=NO','FAKETEMP_VALUE_DECI=360','FAKETEMP_STATE=OFF','FAKETEMP_HORAE_STATE=UNKNOWN',
+      const fakeStatus=['FAKETEMP_ENABLED=NO','FAKETEMP_ADAPTIVE_ENABLED=NO','FAKETEMP_OFFSET_C=5','FAKETEMP_VALUE_DECI=360','FAKETEMP_STATE=OFF','FAKETEMP_HORAE_STATE=UNKNOWN',
         ...Object.entries(settings).map(([key,value])=>key+'='+value)].join(';');
       if(cmd.endsWith('--faketemp-status'))return fakeStatus;
       const socSetter=/--soc-range-(set|delete) ([0-9,-]+)$/.exec(cmd);
@@ -171,17 +187,35 @@ function openWebUi(settings={},onSet,onCommand,bridge,storage=new Map()) {
         'THERMAL_GAP_C=2','THERMAL_TEMP_DECI=340','THERMAL_STATE=OFF','THERMAL_ACTIVE=NO',
         ...Object.entries(settings).map(([key,value])=>key+'='+value)].join(';');
       if(cmd.endsWith('--thermal-status')) return thermalStatus;
+      if(/--cv-(enable|disable)$/.test(cmd)) {
+        writes++;await onSet?.('cv-enabled');settings.CV_ENABLED=cmd.endsWith('--cv-enable')?'YES':'NO';return 'CV_SAVED';
+      }
+      const cvStatus=['CV_ENABLED=YES','CV_START_SOC=90','CV_OFFSET_MV=-20','CV_BAND_MV=5','CV_RAISE_MA=50','CV_LOWER_MA=100','CV_WAIT_MS=1500','CV_FAST_GAP_MV=10','CV_ACTIVE=NO','CV_TARGET_MV=0',
+        ...Object.entries(settings).map(([key,value])=>key+'='+value)].join(';');
+      if(cmd.endsWith('--cv-status'))return cvStatus;
+      const handoffSetter=/--handoff-(soc-set (\d+)|(bypass-)?(enable|disable))$/.exec(cmd);
+      if(handoffSetter) {
+        writes++;await onSet?.('handoff-'+(handoffSetter[2]?'soc':handoffSetter[3]?'bypass':'enabled'));
+        if(handoffSetter[2])settings.HANDOFF_SOC=handoffSetter[2];
+        else settings[handoffSetter[3]?'HANDOFF_BYPASS_ENABLED':'HANDOFF_ENABLED']=handoffSetter[4]==='enable'?'YES':'NO';
+        return 'HANDOFF_SAVED';
+      }
+      const handoffStatus=['HANDOFF_ENABLED=NO','HANDOFF_SOC=100','HANDOFF_BYPASS_ENABLED=YES','BYPASS_STATE=OFF','HANDOFF_ACTIVE=NO','HANDOFF_REASON=NONE',
+        ...Object.entries(settings).map(([key,value])=>key+'='+value)].join(';');
+      if(cmd.endsWith('--handoff-status'))return handoffStatus;
       if(cmd.endsWith('--status')&&cmd.includes('charge-test.sh')) return [
         'CONTROL_STATE=STOPPED','PHASE=IDLE','REASON=WAITING_PROTOCOL',
         'MONITOR_ENABLED=YES','ACTIVE_PROTOCOL=NONE','ONLINE_PROTOCOL=NONE',
         'UFCS_ENABLED=YES','UFCS_LIMIT_MV=4560','UFCS_VOTE_MAX=9000',
         'PPS_ENABLED=YES','PPS_LIMIT_MV=4500','PPS_VOTE_MAX=5000',
         'VOTE_INITIAL=1000','INTERVAL_MS=100','RAISE_STEP=100',
-        'LOWER_STEP=500','CUTOFF_GAP_MV=-50',
+        'LOWER_STEP=500','CUTOFF_GAP_MV=-50','EARLY_GAP_MV=0','EARLY_STEP_MA=0',
         thermalStatus,
         socStatus,
         pulseStatus,
         fakeStatus,
+        cvStatus,
+        handoffStatus,
         ...Object.entries(settings).map(([key,value])=>key+'='+value),
       ].join(';');
       if(cmd.includes('--protocol')) return 'UFCS=0;VOOC=0;PPS=0;USB_ONLINE=0;POWER=NO';
@@ -205,6 +239,143 @@ function openWebUi(settings={},onSet,onCommand,bridge,storage=new Map()) {
   return {el,entries,backs,location,initialUrl,doc,timers,
     window, get writes(){return writes;},get scans(){return scans;}};
 }
+
+test('投票写入失败时显示异常，不显示控制调整已确认',async ()=>{
+  const ui=openWebUi({CONTROL_STATE:'RUNNING',PHASE:'RUNNING',REASON:'VOTE_WRITE_ERROR',ACTIVE_PROTOCOL:'UFCS',TARGET_RAW:'5000'});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.match(ui.el('stateDetail').textContent,/尚未确认调整成功/);
+  assert.match(ui.el('controlLease').textContent,/尚未确认/);
+  assert.match(ui.el('stateDot').className,/danger/);
+  assert.equal(ui.el('controlReadiness').className,'danger-text');
+});
+
+test('系统接管设置独立开关、即时滑动、校验、保存回读与重开持久化',async()=>{
+  const settings={},flush=()=>new Promise(r=>setImmediate(r)),ui=openWebUi(settings);await flush();
+  assert.equal(ui.el('handoffSwitch').checked,false);assert.equal(ui.el('handoffBypassSwitch').checked,true);
+  assert.equal(ui.el('handoffSocInput').value,'100');
+  ui.el('tab-control').emit('click');ui.entries.find(e=>e.dataset.detail==='handoff').emit('click');await flush();
+  assert.equal(ui.el('control-detail-handoff').hidden,false);assert.equal(ui.el('bottomNav').hidden,true);
+  for(const raw of ['-1','101','1.5','1;echo bad']) {ui.el('handoffSocInput').value=raw;await ui.el('handoffSocInput').emit('change');}
+  assert.equal(ui.writes,0);
+  ui.el('handoffSocRange').value='95';ui.el('handoffSocRange').emit('input');
+  assert.equal(ui.el('handoffSocInput').value,'95');assert.equal(ui.writes,0);
+  await ui.el('handoffSocRange').emit('change');assert.equal(settings.HANDOFF_SOC,'95');
+  ui.el('handoffSwitch').checked=true;await ui.el('handoffSwitch').emit('change');
+  ui.el('handoffBypassSwitch').checked=false;await ui.el('handoffBypassSwitch').emit('change');
+  const reopened=openWebUi(settings);await flush();assert.equal(reopened.el('handoffSwitch').checked,true);
+  assert.equal(reopened.el('handoffSocInput').value,'95');assert.equal(reopened.el('handoffBypassSwitch').checked,false);
+  for(const raw of ['0','100']){reopened.el('handoffSocInput').value=raw;await reopened.el('handoffSocInput').emit('change');assert.equal(settings.HANDOFF_SOC,raw);}
+  const active=openWebUi({HANDOFF_ACTIVE:'YES',HANDOFF_REASON:'SYSTEM_SOC',PHASE:'SYSTEM',REASON:'SYSTEM_SOC'});await flush();
+  assert.match(active.el('handoffStatus').textContent,/由系统/);assert.equal(active.el('phaseValue').textContent,'系统接管');
+  assert.equal(active.el('stateName').textContent,'系统接管');assert.match(active.el('controlLease').textContent,/已撤销/);
+  const error=openWebUi({REASON:'SYSTEM_HANDOFF_ERROR'});await flush();
+  assert.match(error.el('stateDot').className,/danger/);assert.match(error.el('controlLease').textContent,/尚未确认/);
+});
+
+test('系统接管写入失败回读真实值，防并发且刷新不覆盖草稿',async()=>{
+  const flush=()=>new Promise(r=>setImmediate(r));let release;
+  const ui=openWebUi({},field=>field==='handoff-soc'?new Promise(r=>{release=r;}):undefined);await flush();
+  ui.el('handoffSocInput').value='95';const pending=ui.el('handoffSocInput').emit('change');await flush();
+  assert.equal(ui.el('handoffSwitch').disabled,true);await ui.el('handoffSwitch').emit('change');assert.equal(ui.writes,1);
+  release();await pending;assert.match(ui.el('handoffSaveStatus').textContent,/已保存并回读确认/);
+  ui.entries.find(e=>e.dataset.detail==='handoff').emit('click');await flush();
+  ui.doc.activeElement=ui.el('handoffSocInput');ui.el('handoffSocInput').value='88';
+  await ui.timers.find(t=>t.ms===1000).fn();assert.equal(ui.el('handoffSocInput').value,'88');
+  const failed=openWebUi({},field=>{if(field==='handoff-soc')throw new Error('存储不可写');});await flush();
+  failed.el('handoffSocInput').value='95';await failed.el('handoffSocInput').emit('change');
+  assert.match(failed.el('handoffSaveStatus').textContent,/失败.*存储不可写/);assert.equal(failed.el('handoffSocInput').value,'100');
+  const bad=openWebUi({},undefined,cmd=>cmd.endsWith('--handoff-status')?'HANDOFF_ENABLED=YES':undefined);await flush();
+  bad.entries.find(e=>e.dataset.detail==='handoff').emit('click');await flush();
+  assert.equal(bad.el('handoffSwitch').disabled,true);assert.match(bad.el('handoffStatus').textContent,/读取失败/);
+});
+
+test('控制页完整读取当前默认预设，不自行发送恢复操作',async()=>{
+  const defaults=JSON.parse(readFileSync(new URL('./fixtures/control-defaults.json',import.meta.url),'utf8'));
+  const ui=openWebUi({...defaults});await new Promise(r=>setImmediate(r));
+  for(const [id,key] of [
+    ['limitInputUFCS','UFCS_LIMIT_MV'],['voteMaxInputUFCS','UFCS_VOTE_MAX'],
+    ['limitInputPPS','PPS_LIMIT_MV'],['voteMaxInputPPS','PPS_VOTE_MAX'],
+    ['advInitialInput','VOTE_INITIAL'],['advIntervalInput','INTERVAL_MS'],
+    ['advRaiseInput','RAISE_STEP'],['advLowerInput','LOWER_STEP'],['advGapInput','CUTOFF_GAP_MV'],
+    ['advEarlyGapInput','EARLY_GAP_MV'],['advEarlyStepInput','EARLY_STEP_MA'],
+    ['cvStartInput','CV_START_SOC'],['cvOffsetInput','CV_OFFSET_MV'],['cvBandInput','CV_BAND_MV'],
+    ['cvRaiseInput','CV_RAISE_MA'],['cvLowerInput','CV_LOWER_MA'],['cvWaitInput','CV_WAIT_MS'],
+    ['cvFastGapInput','CV_FAST_GAP_MV'],['thermalLimitInput','THERMAL_LIMIT_C'],
+    ['thermalVoteInput','THERMAL_VOTE_MA'],['thermalGapInput','THERMAL_GAP_C'],
+    ['pulseChargeInput','PULSE_CHARGE_S'],['pulsePauseInput','PULSE_PAUSE_MS'],['handoffSocInput','HANDOFF_SOC'],
+  ]) assert.equal(ui.el(id).value,defaults[key],id);
+  for(const [id,key] of [['thermalSwitch','THERMAL_ENABLED'],['fakeSwitch','FAKETEMP_ENABLED'],
+    ['cvSwitch','CV_ENABLED'],['pulseSwitch','PULSE_ENABLED'],['socSwitch','SOC_ENABLED'],
+    ['handoffSwitch','HANDOFF_ENABLED'],['handoffBypassSwitch','HANDOFF_BYPASS_ENABLED']]) {
+    assert.equal(ui.el(id).checked,defaults[key]==='YES',id);
+  }
+  assert.equal(ui.writes,0);
+});
+
+test('恒压设置默认值、七项滑动输入、开关、重开持久化与一键恢复默认',async()=>{
+  const settings={},flush=()=>new Promise(r=>setImmediate(r)),ui=openWebUi(settings);await flush();
+  assert.equal(ui.el('cvSwitch').checked,true);
+  for(const [name,value] of [['Start','90'],['Offset','-20'],['Band','5'],['Raise','50'],['Lower','100'],['Wait','1500'],['FastGap','10']])assert.equal(ui.el('cv'+name+'Input').value,value);
+  ui.el('tab-control').emit('click');ui.entries.find(e=>e.dataset.detail==='cv').emit('click');await flush();
+  assert.equal(ui.el('control-detail-cv').hidden,false);assert.equal(ui.el('bottomNav').hidden,true);
+  for(const [name,value] of [['Start','101'],['Offset','-51'],['Offset','1'],['Band','0'],['Raise','501'],['Lower','1001'],['Wait','199'],['FastGap','-1'],['FastGap','51']]) {
+    ui.el('cv'+name+'Input').value=value;await ui.el('cv'+name+'Input').emit('change');
+  }
+  assert.equal(ui.writes,0);
+  for(const [name,value] of [['Start','0'],['Offset','-35'],['Band','10'],['Raise','80'],['Lower','30'],['Wait','500'],['FastGap','25']]) {
+    ui.el('cv'+name+'Range').value=value;ui.el('cv'+name+'Range').emit('input');
+    assert.equal(ui.el('cv'+name+'Input').value,value);await ui.el('cv'+name+'Range').emit('change');
+    assert.match(ui.el('cvSaveStatus').textContent,/已保存并回读确认/);
+  }
+  ui.el('cvSwitch').checked=false;await ui.el('cvSwitch').emit('change');
+  const reopened=openWebUi(settings);await flush();assert.equal(reopened.el('cvSwitch').checked,false);
+  for(const [name,value] of [['Start','0'],['Offset','-35'],['Band','10'],['Raise','80'],['Lower','30'],['Wait','500'],['FastGap','25']])assert.equal(reopened.el('cv'+name+'Input').value,value);
+  for(const raw of ['-50','0']) {
+    reopened.el('cvOffsetInput').value=raw;reopened.el('cvOffsetInput').emit('input');
+    assert.equal(reopened.el('cvOffsetRange').value,raw);await reopened.el('cvOffsetInput').emit('change');
+    assert.equal(settings.CV_OFFSET_MV,raw);
+  }
+  for(const raw of ['0','50']) {
+    reopened.el('cvFastGapInput').value=raw;reopened.el('cvFastGapInput').emit('input');
+    assert.equal(reopened.el('cvFastGapRange').value,raw);await reopened.el('cvFastGapInput').emit('change');
+    assert.equal(settings.CV_FAST_GAP_MV,raw);
+  }
+  await reopened.el('cvReset').emit('click');assert.equal(reopened.el('cvSwitch').checked,true);
+  for(const [name,value] of [['Start','80'],['Offset','-5'],['Band','5'],['Raise','50'],['Lower','100'],['Wait','1500'],['FastGap','15']])assert.equal(reopened.el('cv'+name+'Input').value,value);
+  assert.match(reopened.el('cvSaveStatus').textContent,/已恢复默认并回读确认/);
+});
+
+test('恒压设置禁止并发写入、失败回读真实值，定时刷新不覆盖输入草稿',async()=>{
+  const settings={},flush=()=>new Promise(r=>setImmediate(r));let release;
+  const ui=openWebUi(settings,field=>field==='cv-wait'?new Promise(r=>{release=r;}):undefined);await flush();
+  ui.el('cvWaitInput').value='500';const pending=ui.el('cvWaitInput').emit('change');await flush();
+  assert.equal(ui.el('cvSwitch').disabled,true);assert.equal(ui.el('cvReset').disabled,true);
+  ui.el('cvBandInput').value='8';await ui.el('cvBandInput').emit('change');assert.equal(ui.writes,1);
+  release();await pending;assert.equal(ui.el('cvWaitInput').value,'500');
+  ui.el('tab-control').emit('click');ui.entries.find(e=>e.dataset.detail==='cv').emit('click');await flush();
+  ui.doc.activeElement=ui.el('cvBandInput');ui.el('cvBandInput').value='12';
+  await ui.timers.find(t=>t.ms===1000).fn();assert.equal(ui.el('cvBandInput').value,'12');
+  const failed=openWebUi({},field=>{if(field==='cv-start')throw new Error('存储不可写');});await flush();
+  failed.el('cvStartInput').value='75';await failed.el('cvStartInput').emit('change');
+  assert.match(failed.el('cvSaveStatus').textContent,/失败.*存储不可写/);assert.equal(failed.el('cvStartInput').value,'90');
+  const bad=openWebUi({},undefined,cmd=>cmd.endsWith('--cv-status')?'CV_ENABLED=YES;CV_START_SOC=101':undefined);await flush();
+  bad.entries.find(e=>e.dataset.detail==='cv').emit('click');await flush();
+  assert.equal(bad.el('cvStartInput').disabled,true);assert.match(bad.el('cvStatus').textContent,/读取失败/);
+  const partial=openWebUi({CV_ENABLED:'NO',CV_START_SOC:'75',CV_BAND_MV:'10',CV_LOWER_MA:'30',CV_WAIT_MS:'500'},field=>{
+    if(field==='cv-lower')throw new Error('写入失败');
+  });await flush();await partial.el('cvReset').emit('click');
+  assert.match(partial.el('cvSaveStatus').textContent,/恢复默认未完成/);
+  assert.equal(partial.el('cvStartInput').value,'80');assert.equal(partial.el('cvLowerInput').value,'30');
+  assert.equal(partial.el('cvWaitInput').value,'500');assert.equal(partial.el('cvSwitch').checked,false);
+});
+
+test('快速降流压差保存失败回读旧值，非法回读禁止继续编辑',async()=>{
+  const ui=openWebUi({CV_FAST_GAP_MV:'20'},field=>{if(field==='cv-fast-gap')throw new Error('存储不可写');});
+  await new Promise(r=>setImmediate(r));ui.el('cvFastGapInput').value='50';await ui.el('cvFastGapInput').emit('change');
+  assert.equal(ui.el('cvFastGapInput').value,'20');assert.match(ui.el('cvSaveStatus').textContent,/失败.*存储不可写/);
+  const bad=openWebUi({CV_FAST_GAP_MV:'51'});await new Promise(r=>setImmediate(r));
+  assert.equal(bad.el('cvFastGapInput').disabled,true);assert.match(bad.el('cvStatus').textContent,/响应无效|读取失败/);
+});
 
 test('间断充电默认值、时间边界、滑动输入、开关、多区间添加删除与重开持久化',async ()=>{
   const settings={};const ui=openWebUi(settings);await new Promise(resolve=>setImmediate(resolve));
@@ -262,23 +433,27 @@ test('充电记录实时跟随、拖动保留时间点、历史选择与缓存�
   assert.equal(ui.el('historyRecordsToggle')['aria-expanded'],'true');
   ui.el('historyRecordsToggle').emit('click');
   assert.equal(ui.el('historyRecords').hidden,true);
-  assert.equal(ui.el('historyValue-soc').textContent,'21%');assert.equal(ui.el('historyValue-power').textContent,'13.53 W');
-  assert.equal(ui.el('historyCanvas-power').width,720);assert.equal(ui.el('historyTable').children.length,2);
-  for(const [key,unit] of [['power','W'],['soc','%'],['temp','°C'],['voltage','V']]) {
-    const canvas=ui.el('historyCanvas-'+key);
-    assert.equal(canvas.width,720);assert.equal(canvas.height,380);
-    assert.ok(canvas.context.calls.some(call=>call.name==='stroke' && call.stroke==='#1677e8'));
-    const labels=canvas.context.calls.filter(call=>call.name==='fillText').map(call=>String(call.args[0]));
+  assert.equal(ui.el('historyValue-soc').textContent,'21%');assert.equal(ui.el('historyChartValue-power').textContent,'13.53 W');
+  assert.equal(ui.el('historyCanvas').width,720);assert.equal(ui.el('historyTable').children.length,2);
+  assert.equal((html.match(/<canvas\b/g)||[]).length,1,'五项曲线只使用一张画布');
+  const canvas=ui.el('historyCanvas');assert.equal(canvas.height,600);
+  const beforeAxes=reads;
+  for(const [key,unit] of [['power','W'],['soc','%'],['temp','°C'],['voltage','V'],['vote','mA']]) {
+    const start=canvas.context.calls.length;ui.el('historyAxis-'+key).emit('click');
+    assert.equal(ui.el('historyAxis-'+key)['aria-pressed'],'true');
+    const labels=canvas.context.calls.slice(start).filter(call=>call.name==='fillText').map(call=>String(call.args[0]));
     assert.ok(labels.some(text=>text.endsWith(unit)),key+' 轴使用自身单位');
     assert.ok(labels.includes('5m'),'短记录全程视图至少显示 5 分钟');
+    assert.match(ui.el('historyAxisLabel').textContent,new RegExp(unit));
   }
+  assert.equal(reads,beforeAxes,'切换纵轴不请求后台');
   assert.equal(ui.el('historySocArc')['stroke-dasharray'],'21 100');
   assert.equal(ui.el('historyChargeState').textContent,'正在记录');
   assert.equal(ui.el('historyDuration').textContent,'0:00:02');
   assert.equal(ui.el('historySocGain').textContent,'+1%');
   assert.equal(ui.doc.body.dataset.page,'history');
   assert.equal(ui.el('historyState').hidden,true);
-  ui.el('historyCanvas-temp').emit('pointerdown',{clientX:36,pointerId:1});assert.equal(ui.el('historyValue-soc').textContent,'20%');
+  ui.el('historyCanvas').emit('pointerdown',{clientX:66,pointerId:1});assert.equal(ui.el('historyValue-soc').textContent,'20%');
   assert.equal(ui.el('historyChartValue-power').textContent,'9.00 W');
   assert.equal(ui.el('historyChartValue-temp').textContent,'35.0 °C');
   rows.push('1792340004,4000,22,370,4520000,-4000000');
@@ -286,7 +461,7 @@ test('充电记录实时跟随、拖动保留时间点、历史选择与缓存�
   await ui.timers.find(t=>t.ms===200).fn();assert.equal(ui.el('historyValue-soc').textContent,'20%','刷新不抢走拖动位置');
   ui.el('historyLive').emit('click');await flush();assert.equal(ui.el('historyValue-soc').textContent,'22%');
   ui.el('historySession').value=old;ui.el('historySession').emit('change');await flush();
-  assert.equal(ui.el('historyValue-soc').textContent,'10%');assert.equal(ui.el('historyValue-power').textContent,'4.00 W');
+  assert.equal(ui.el('historyValue-soc').textContent,'10%');assert.equal(ui.el('historyChartValue-power').textContent,'4.00 W');
   const cachedReads=reads;await ui.timers.find(t=>t.ms===200).fn();assert.equal(reads,cachedReads,'不反复读取已结束记录');
   ui.el('historyLive').emit('click');await flush();assert.equal(ui.el('historyValue-soc').textContent,'22%');
   ui.doc.hidden=true;const count=lists;await ui.timers.find(t=>t.ms===200).fn();assert.equal(lists,count);
@@ -300,7 +475,9 @@ test('统计页无记录时显示空值，后台停止、存储失败与损坏�
     if(cmd.includes('charging-history.sh'))return 'HISTORY_RUNNING='+running+';HISTORY_ACTIVE=NONE;HISTORY_ERROR='+error+';HISTORY_MORE=NO;HISTORY_SKIPPED='+skipped+';HISTORY_SESSIONS=NONE';
   });
   const flush=()=>new Promise(r=>setImmediate(r));await flush();ui.el('tab-history').emit('click');await flush();
-  for(const key of ['soc','temp','voltage','power'])assert.equal(ui.el('historyValue-'+key).textContent,'—');
+  for(const key of ['soc','temp','voltage','power','vote']) {
+    assert.equal(ui.el(key==='soc'?'historyValue-soc':'historyChartValue-'+key).textContent,'—');assert.equal(ui.el('historyMax-'+key).textContent,'—');
+  }
   assert.equal(ui.el('historySocArc')['stroke-dasharray'],'0 100');
   assert.equal(ui.el('historyDuration').textContent,'—');assert.equal(ui.el('historySocGain').textContent,'—');
   assert.equal(ui.el('historyState').hidden,false);assert.match(ui.el('historyState').textContent,/未运行/);
@@ -310,6 +487,108 @@ test('统计页无记录时显示空值，后台停止、存储失败与损坏�
   assert.equal(ui.el('historyState').hidden,false);assert.match(ui.el('historyState').textContent,/1 条记录摘要异常/);
   assert.equal(ui.el('historyError').textContent,'');
   assert.equal(ui.writes,0);
+});
+
+test('统计默认显示最近一次，开始充电自动切到当前，结束后保留本次，手动选择历史不被抢走',async()=>{
+  const recent='1792340000-12345678-100000',old='1792330000-12345678-100000',current='1792350000-12345678-100000';
+  let charging=false,hasCurrent=false,running='YES';const reads=[];
+  const backend=cmd=>{
+    if(!cmd.includes('charging-history.sh'))return;
+    if(cmd.includes('--list')) {
+      const rows=[...(hasCurrent?[current+',1792350000,1792350010,10000,70,71,2,'+(charging?'ACTIVE':'UNPLUGGED')]:[]),
+        recent+',1792340000,1792340010,10000,50,60,2,UNPLUGGED',old+',1792330000,1792330010,10000,10,11,2,UNPLUGGED'];
+      return 'HISTORY_RUNNING='+running+';HISTORY_ACTIVE='+(charging?current:'NONE')+';HISTORY_ERROR=NONE;HISTORY_MORE=NO;HISTORY_SESSIONS='+rows.join(':');
+    }
+    const id=/--read ([^ ]+)/.exec(cmd)[1];reads.push(id);
+    const [epoch,soc]=id===current?[1792350000,70]:id===recent?[1792340000,50]:[1792330000,10];
+    const data=epoch+',0,'+soc+',350,4500000,-2000000\n'+(epoch+10)+',10000,'+(soc+1)+',360,4510000,-3000000\n';
+    return 'HISTORY_ID='+id+';HISTORY_TOTAL=2;HISTORY_DATA_B64='+Buffer.from(data).toString('base64');
+  };
+  const flush=()=>new Promise(r=>setImmediate(r)),ui=openWebUi({},undefined,backend);await flush();ui.el('tab-history').emit('click');await flush();
+  assert.equal(ui.el('historySession').value,recent);assert.equal(ui.el('historyValue-soc').textContent,'51%');
+  assert.equal(ui.el('historyChargeState').textContent,'充电已结束');assert.equal(ui.el('historyLive').textContent,'最近一次');
+  assert.equal(ui.el('historyLive')['aria-pressed'],'true');
+  const cached=reads.length;await ui.el('historyRefresh').emit('click');assert.equal(reads.length,cached,'完成记录沿用缓存');
+  running='NO';await ui.el('historyRefresh').emit('click');
+  assert.equal(ui.el('historySession').value,recent);assert.equal(ui.el('historyValue-soc').textContent,'51%','记录器停止仍能查看最近一次');
+  running='YES';charging=hasCurrent=true;await ui.el('historyRefresh').emit('click');
+  assert.equal(ui.el('historySession').value,current);assert.equal(ui.el('historyValue-soc').textContent,'71%');
+  assert.equal(ui.el('historyChargeState').textContent,'正在记录');assert.equal(ui.el('historyLive').textContent,'实时');
+  ui.el('historySession').value=old;ui.el('historySession').emit('change');await flush();await ui.el('historyRefresh').emit('click');
+  assert.equal(ui.el('historySession').value,old);assert.equal(ui.el('historyValue-soc').textContent,'11%');
+  assert.equal(ui.el('historyLive')['aria-pressed'],'false');
+  ui.el('historyLive').emit('click');await flush();assert.equal(ui.el('historySession').value,current);
+  ui.el('historyRangeStart').value='500';ui.el('historyRangeStart').emit('input');await ui.el('historyRangeStart').emit('change');await flush();
+  charging=false;await ui.el('historyRefresh').emit('click');
+  assert.equal(ui.el('historySession').value,current);assert.equal(ui.el('historyChargeState').textContent,'充电已结束');
+  assert.equal(ui.el('historyRangeStart').value,'500','同一次充电结束后保留所选缩放范围');
+  assert.equal(ui.el('historyLive').textContent,'最近一次');assert.equal(ui.el('historyError').textContent,'');
+  const reopened=openWebUi({},undefined,backend);await flush();reopened.el('tab-history').emit('click');await flush();
+  assert.equal(reopened.el('historySession').value,current);assert.equal(reopened.el('historyValue-soc').textContent,'71%');
+  assert.equal(reopened.writes,0);
+});
+
+test('投票图表同步点选，全程峰值不随缩放改变，切换旧记录清空投票，双芯仅翻倍最高功率',async()=>{
+  const active='1792340000-12345678-100000',old='1792330000-12345678-100000';
+  const rows=['1792340000,0,20,450,4600000,-5000000,10000','1792340010,10000,21,350,4500000,-2000000,5000'];
+  const ui=openWebUi({},undefined,cmd=>{
+    if(!cmd.includes('charging-history.sh'))return;
+    if(cmd.includes('--list'))return 'HISTORY_RUNNING=YES;HISTORY_ACTIVE='+active+';HISTORY_ERROR=NONE;HISTORY_MORE=NO;HISTORY_SESSIONS='+
+      active+',1792340000,1792340010,10000,20,21,2,ACTIVE:'+old+',1792330000,1792330010,10000,10,11,1,UNPLUGGED';
+    const match=/--read ([^ ]+)(?: (\d+) (\d+))?$/.exec(cmd),key=match[1];
+    const data=key===old?['1792330000,0,10,320,4000000,-1000000']:rows.filter(line=>!match[2] || Number(line.split(',')[1])>=Number(match[2]));
+    const maxima=key===old?'MAX,10,320,4000000,4000000000000,':'MAX,21,450,4600000,23000000000000,10000';
+    return 'HISTORY_ID='+key+';HISTORY_TOTAL=2;HISTORY_DATA_B64='+Buffer.from(maxima+'\n'+data.join('\n')+'\n').toString('base64');
+  });
+  const flush=()=>new Promise(r=>setImmediate(r));await flush();ui.el('tab-history').emit('click');await flush();
+  assert.equal(ui.el('historyChartValue-vote').textContent,'5000 mA');
+  for(const [key,text] of [['soc','21 %'],['temp','45.0 °C'],['voltage','4.600 V'],['power','23.00 W'],['vote','10000 mA']])assert.equal(ui.el('historyMax-'+key).textContent,text);
+  const canvas=ui.el('historyCanvas');assert.equal(canvas.width,720);
+  ui.el('historyAxis-vote').emit('click');
+  assert.ok(canvas.context.calls.some(call=>call.name==='fillText' && String(call.args[0]).endsWith('mA')));
+  canvas.emit('pointerdown',{clientX:66,pointerId:1});assert.equal(ui.el('historyChartValue-vote').textContent,'10000 mA');
+  ui.el('historyRangeStart').value='500';ui.el('historyRangeStart').emit('input');await ui.el('historyRangeStart').emit('change');await flush();
+  assert.equal(ui.el('historyChartValue-vote').textContent,'5000 mA');assert.equal(ui.el('historyTable').children.length,1);
+  assert.equal(ui.el('historyMax-temp').textContent,'45.0 °C');assert.equal(ui.el('historyMax-vote').textContent,'10000 mA');
+  ui.el('historyDualCell').checked=true;ui.el('historyDualCell').emit('change');
+  assert.equal(ui.el('historyMax-power').textContent,'46.00 W');assert.equal(ui.el('historyMax-vote').textContent,'10000 mA');
+  ui.el('historySession').value=old;ui.el('historySession').emit('change');await flush();
+  assert.equal(ui.el('historyChartValue-vote').textContent,'—');assert.equal(ui.el('historyMax-vote').textContent,'—');
+  assert.equal(ui.el('historyMax-temp').textContent,'32.0 °C');assert.equal(ui.el('historyError').textContent,'');assert.equal(ui.writes,0);
+});
+
+test('合并图五条曲线各自缩放并共享时间位置，投票缺失处断线，切换纵轴保持全部曲线和选点',async()=>{
+  const active='1792340000-12345678-100000';let reads=0;
+  const raw=['1792340000,0,20,350,4500000,-2000000,1000','1792340001,1000,21,360,4510000,-3000000,',
+    '1792340002,2000,22,370,4520000,-4000000,3000','1792340003,3000,23,380,4530000,-5000000,4000'];
+  const ui=openWebUi({},undefined,cmd=>{
+    if(!cmd.includes('charging-history.sh'))return;
+    if(cmd.includes('--list'))return 'HISTORY_RUNNING=YES;HISTORY_ACTIVE='+active+';HISTORY_ERROR=NONE;HISTORY_MORE=NO;HISTORY_SESSIONS='+active+',1792340000,1792340003,3000,20,23,4,ACTIVE';
+    reads++;return 'HISTORY_ID='+active+';HISTORY_TOTAL=4;HISTORY_DATA_B64='+Buffer.from(raw.join('\n')+'\n').toString('base64');
+  });
+  const flush=()=>new Promise(r=>setImmediate(r));await flush();ui.el('tab-history').emit('click');await flush();
+  const canvas=ui.el('historyCanvas'), colors=['#1677e8','#16803c','#d32f2f','#d4aa00','#161616'];
+  canvas.context.calls.length=0;ui.el('historyAxis-voltage').emit('click');
+  const calls=canvas.context.calls;
+  for(const color of colors) {
+    const moves=calls.filter(c=>c.name==='moveTo' && c.stroke===color);
+    assert.equal(moves[0].args[0],66,'每项第一个点都从同一时间位置开始');
+    assert.ok(calls.some(c=>c.name==='stroke' && c.stroke===color),'切换后仍绘制全部曲线');
+  }
+  assert.ok(calls.filter(c=>c.name==='setLineDash').every(c=>c.args[0].length===0),'全部曲线和选点辅助线均为实线');
+  const voteMoves=calls.filter(c=>c.name==='moveTo' && c.stroke==='#161616');
+  assert.equal(voteMoves.length,2,'缺失的投票值使曲线断开');
+  assert.ok(Math.abs(voteMoves[1].args[0]-(66+284*2000/300000))<1e-8);
+  const voltageStart=calls.find(c=>c.name==='moveTo' && c.stroke==='#d4aa00');
+  assert.equal(voltageStart.args[1],12+(1-(4.5-3)/2)*260,'电压使用 3–5V 独立刻度');
+  canvas.emit('keydown',{key:'Home'});assert.equal(ui.el('historyChartValue-vote').textContent,'1000 mA');
+  canvas.emit('keydown',{key:'ArrowRight'});assert.equal(ui.el('historyChartValue-vote').textContent,'—');
+  const point=ui.el('historyPoint').textContent;
+  const before=reads;ui.el('historyAxis-vote').emit('click');
+  assert.equal(reads,before);assert.equal(ui.el('historyPoint').textContent,point);
+  assert.equal(ui.el('historyAxis-voltage')['aria-pressed'],'false');
+  assert.equal(ui.el('historyAxis-vote')['aria-pressed'],'true');
+  assert.match(canvas['aria-label'],/纵轴为模块投票值（mA）/);
 });
 
 test('图表按真实时间选择、范围滑动立即响应与细节回读，双电芯显示持久化且不改原始记录',async()=>{
@@ -326,23 +605,94 @@ test('图表按真实时间选择、范围滑动立即响应与细节回读，�
   };
   const flush=()=>new Promise(r=>setImmediate(r)),ui=openWebUi({},undefined,backend,undefined,storage);await flush();
   ui.el('tab-history').emit('click');await flush();
-  ui.el('historyCanvas-power').emit('pointerdown',{clientX:36+314*(2500/300000),pointerId:1});
+  ui.el('historyCanvas').emit('pointerdown',{clientX:66+284*(2500/300000),pointerId:1});
   assert.equal(ui.el('historyValue-soc').textContent,'21%','2500ms 按真实距离选 200ms，而非按数组中点');
   assert.match(ui.el('historyPoint').textContent,/0:00:00\.200/);
-  assert.equal(ui.el('historyValue-power').textContent,'13.53 W');
+  assert.equal(ui.el('historyChartValue-power').textContent,'13.53 W');
   ui.el('historyDualCell').checked=true;ui.el('historyDualCell').emit('change');
-  assert.equal(ui.el('historyValue-power').textContent,'27.06 W');assert.equal(ui.el('historyValue-voltage').textContent,'4.510 V');
+  assert.equal(ui.el('historyChartValue-power').textContent,'27.06 W');assert.equal(ui.el('historyChartValue-voltage').textContent,'4.510 V');
   assert.equal(ui.el('historyTable').children[3].children[4].textContent,'18.00 W');assert.equal(ui.writes,0);
   const before=calls.length;ui.el('historyRangeStart').value='500';ui.el('historyRangeStart').emit('input');
   assert.equal(calls.length,before,'滑动阶段只绘图，不等待后台读取');assert.equal(ui.el('historyTable').children.length,2);
   assert.equal(ui.el('historyValue-soc').textContent,'22%');assert.equal(ui.el('historyRangeStartTime').textContent,'0:00:05');
   await ui.timers.find(t=>t.ms===200).fn();assert.equal(calls.length,before,'拖动期间不排队刷新');
   await ui.el('historyRangeStart').emit('change');await flush();assert.ok(calls.some(cmd=>cmd.endsWith('--read '+active+' 5000 10000')));
-  ui.el('historyCanvas-voltage').emit('keydown',{key:'End'});assert.equal(ui.el('historyValue-power').textContent,'45.30 W');
+  ui.el('historyCanvas').emit('keydown',{key:'End'});assert.equal(ui.el('historyChartValue-power').textContent,'45.30 W');
   const reopened=openWebUi({},undefined,backend,undefined,storage);await flush();reopened.el('tab-history').emit('click');await flush();
-  assert.equal(reopened.el('historyDualCell').checked,true);assert.equal(reopened.el('historyValue-power').textContent,'45.30 W');
+  assert.equal(reopened.el('historyDualCell').checked,true);assert.equal(reopened.el('historyChartValue-power').textContent,'45.30 W');
   assert.equal(raw[0],'1792340000,0,20,350,4500000,-2000000');
-  reopened.el('historyDualCell').checked=false;reopened.el('historyDualCell').emit('change');assert.equal(reopened.el('historyValue-power').textContent,'22.65 W');
+  reopened.el('historyDualCell').checked=false;reopened.el('historyDualCell').emit('change');assert.equal(reopened.el('historyChartValue-power').textContent,'22.65 W');
+});
+
+test('双指围绕中心缩放时间，手势中不读取，结束后读细节，缩放不改变整次最高值',async()=>{
+  assert.match(html,/\.history-canvas \{[^}]*touch-action:none/,'图表手势交给应用处理，避免浏览器抢走双指操作');
+  const active='1792340000-12345678-100000',calls=[];
+  const raw=[0,75000,150000,225000,300000].map((ms,i)=>(1792340000+ms/1000)+','+ms+','+(20+i)+',350,4500000,-2000000,5000');
+  const ui=openWebUi({},undefined,cmd=>{
+    if(!cmd.includes('charging-history.sh'))return;
+    calls.push(cmd);
+    if(cmd.includes('--list'))return 'HISTORY_RUNNING=YES;HISTORY_ACTIVE='+active+';HISTORY_ERROR=NONE;HISTORY_MORE=NO;HISTORY_SESSIONS='+active+',1792340000,1792340300,300000,20,24,5,ACTIVE';
+    const match=/--read [^ ]+(?: (\d+) (\d+))?$/.exec(cmd);
+    const data=raw.filter(row=>!match[1] || Number(row.split(',')[1])>=Number(match[1]) && Number(row.split(',')[1])<=Number(match[2]));
+    return 'HISTORY_ID='+active+';HISTORY_TOTAL=5;HISTORY_DATA_B64='+Buffer.from('MAX,90,500,4650000,100000000000000,12000\n'+data.join('\n')+'\n').toString('base64');
+  });
+  const flush=()=>new Promise(r=>setImmediate(r));await flush();ui.el('tab-history').emit('click');await flush();
+  const canvas=ui.el('historyCanvas'),touch=(type,id,x)=>canvas.emit(type,{pointerType:'touch',pointerId:id,clientX:x,clientY:100,buttons:1});
+  const before=calls.length;
+  touch('pointerdown',1,137);touch('pointerdown',2,279);
+  touch('pointermove',1,66);touch('pointermove',2,350);
+  assert.equal(ui.el('historyRangeStart').value,'250');assert.equal(ui.el('historyRangeEnd').value,'750');
+  assert.equal(ui.el('historyRangeStartTime').textContent,'0:01:15');assert.equal(ui.el('historyRangeEndTime').textContent,'0:03:45');
+  assert.equal(ui.el('historyMax-temp').textContent,'50.0 °C');assert.equal(ui.el('historyMax-power').textContent,'100.00 W');
+  await ui.timers.find(t=>t.ms===200).fn();assert.equal(calls.length,before,'双指移动不请求后台');
+  touch('pointerup',1,66);touch('lostpointercapture',1,66);touch('pointerup',2,350);await flush();
+  assert.ok(calls.some(cmd=>cmd.endsWith('--read '+active+' 75000 225000')));
+  assert.equal(calls.length,before+2,'抬起与丢失捕获仅触发一次刷新');
+  assert.equal(ui.el('historyMax-temp').textContent,'50.0 °C');assert.equal(ui.el('historyMax-vote').textContent,'12000 mA');
+  touch('pointerdown',3,66);touch('pointerdown',4,350);touch('pointermove',3,137);touch('pointermove',4,279);
+  assert.equal(ui.el('historyRangeStart').value,'0');assert.equal(ui.el('historyRangeEnd').value,'1000');
+  touch('pointercancel',3,137);touch('pointerup',4,279);await flush();
+  assert.equal(calls.at(-1),'sh /data/adb/modules/oplus-votable/charging-history.sh --read '+active);
+});
+
+test('双指缩放限制时间边界和最小范围，多指切换不跳变，结束后的单指仍能选点',async()=>{
+  const active='1792340000-12345678-100000';
+  const ui=openWebUi({},undefined,cmd=>{
+    if(!cmd.includes('charging-history.sh'))return;
+    if(cmd.includes('--list'))return 'HISTORY_RUNNING=YES;HISTORY_ACTIVE='+active+';HISTORY_ERROR=NONE;HISTORY_MORE=NO;HISTORY_SESSIONS='+active+',1792340000,1792340010,10000,20,21,2,ACTIVE';
+    return 'HISTORY_ID='+active+';HISTORY_TOTAL=2;HISTORY_DATA_B64='+Buffer.from('1792340000,0,20,350,4500000,-2000000\n1792340010,10000,21,360,4510000,-3000000\n').toString('base64');
+  });
+  const flush=()=>new Promise(r=>setImmediate(r));await flush();ui.el('tab-history').emit('click');await flush();
+  const canvas=ui.el('historyCanvas'),touch=(type,id,x)=>canvas.emit(type,{pointerType:'touch',pointerId:id,clientX:x,clientY:100,buttons:1});
+  touch('pointerdown',1,207);touch('pointerdown',2,208);touch('pointermove',1,66);touch('pointermove',2,350);
+  assert.equal(Number(ui.el('historyRangeEnd').value)-Number(ui.el('historyRangeStart').value),20);
+  assert.ok(Number(ui.el('historyRangeStart').value)>=0);assert.ok(Number(ui.el('historyRangeEnd').value)<=1000);
+  touch('pointerdown',3,200);const range=ui.el('historyRangeStart').value;
+  touch('pointerup',1,66);assert.equal(ui.el('historyRangeStart').value,range,'换用剩余两指不会重置范围');
+  touch('pointercancel',2,350);touch('pointerup',3,200);await flush();
+  ui.el('historyRangeStart').value='0';ui.el('historyRangeStart').emit('input');
+  ui.el('historyRangeEnd').value='1000';ui.el('historyRangeEnd').emit('input');await ui.el('historyRangeEnd').emit('change');await flush();
+  touch('pointerdown',4,66);touch('pointerup',4,66);assert.equal(ui.el('historyValue-soc').textContent,'20%');
+  assert.equal(ui.el('historyError').textContent,'');
+});
+
+test('双指缩放取消旧读取，慢响应不能覆盖新范围；空记录手势不阻断刷新',async()=>{
+  const active='1792340000-12345678-100000';let release,reads=0;
+  const payload='HISTORY_ID='+active+';HISTORY_TOTAL=2;HISTORY_DATA_B64='+Buffer.from('1792340000,0,20,350,4500000,-2000000\n1792340150,150000,21,360,4510000,-3000000\n').toString('base64');
+  const ui=openWebUi({},undefined,cmd=>{
+    if(!cmd.includes('charging-history.sh'))return;
+    if(cmd.includes('--list'))return 'HISTORY_RUNNING=YES;HISTORY_ACTIVE='+active+';HISTORY_ERROR=NONE;HISTORY_MORE=NO;HISTORY_SESSIONS='+active+',1792340000,1792340300,300000,20,21,2,ACTIVE';
+    return ++reads===1?new Promise(r=>{release=r;}):payload;
+  });
+  const flush=()=>new Promise(r=>setImmediate(r));await flush();ui.el('tab-history').emit('click');await flush();
+  const canvas=ui.el('historyCanvas'),touch=(type,id,x)=>canvas.emit(type,{pointerType:'touch',pointerId:id,clientX:x,clientY:100,buttons:1});
+  touch('pointerdown',1,137);touch('pointerdown',2,279);touch('pointermove',1,66);touch('pointermove',2,350);touch('pointerup',1,66);touch('pointerup',2,350);
+  release(payload);await flush();await flush();
+  assert.equal(reads,2);assert.equal(ui.el('historyRangeStart').value,'250');assert.equal(ui.el('historyRangeEnd').value,'750');
+  const empty=openWebUi({},undefined,cmd=>cmd.includes('charging-history.sh')?'HISTORY_RUNNING=YES;HISTORY_ACTIVE=NONE;HISTORY_ERROR=NONE;HISTORY_MORE=NO;HISTORY_SESSIONS=NONE':undefined);
+  await flush();empty.el('tab-history').emit('click');await flush();
+  for(const type of ['pointerdown','pointermove','pointercancel']) for(const id of [1,2])empty.el('historyCanvas').emit(type,{pointerType:'touch',pointerId:id,clientX:100+id*50,clientY:100,buttons:1});
+  await empty.el('historyRefresh').emit('click');assert.equal(empty.el('historyRefresh').disabled,false);assert.equal(empty.el('historyError').textContent,'');
 });
 
 test('图表慢请求期间丢弃自动刷新，长读取自动退避，存储不可用仍可切换双电芯',async()=>{
@@ -592,7 +942,7 @@ test('Tab 和控制设置直接原位切换，浏览器返回不产生中间记�
 });
 
 test('UFCS/PPS 分别恢复新默认值、保存后回读，重开保留，且不修改另一协议或高级参数',async ()=>{
-  for(const [key,mv,vote] of [['UFCS','4560','9000'],['PPS','4500','5000']]) {
+  for(const [key,mv,vote] of [['UFCS','4560','10900'],['PPS','4460','5800']]) {
     const settings={UFCS_LIMIT_MV:'4200',UFCS_VOTE_MAX:'7000',PPS_LIMIT_MV:'4400',PPS_VOTE_MAX:'4800',VOTE_INITIAL:'3000'};
     const other=key==='UFCS'?'PPS':'UFCS';
     const before=[settings[other+'_LIMIT_MV'],settings[other+'_VOTE_MAX']];
@@ -690,15 +1040,15 @@ test('概览不再读取协商卡片，进入诊断页仍能获取当前协议�
   for(const id of ['diagEffective','diagForceVal','diagForceActive'])assert.equal(ui.el(id).textContent,'—');
 });
 
-test('恢复默认保存五项参数，阻止并发修改，重开页面仍显示默认值',async ()=>{
+test('恢复默认保存七项参数，阻止并发修改，重开页面仍显示默认值',async ()=>{
   const settings={VOTE_INITIAL:'4200',INTERVAL_MS:'90',RAISE_STEP:'180',
     LOWER_STEP:'170',CUTOFF_GAP_MV:'-60',UFCS_LIMIT_MV:'4200',PPS_VOTE_MAX:'5000'};
   let release;
   const pending=new Promise(resolve=>{release=resolve;});
   const ui=openWebUi(settings,()=>pending);
   await new Promise(resolve=>setImmediate(resolve));
-  const values=[['advInitial','1000'],['advInterval','100'],['advRaise','100'],
-    ['advLower','500'],['advGap','-50']];
+  const values=[['advInitial','2000'],['advInterval','100'],['advRaise','100'],
+    ['advLower','1000'],['advGap','-50'],['advEarlyGap','-10'],['advEarlyStep','200']];
   const resetting=ui.el('advReset').emit('click');
   assert.equal(ui.el('advReset').disabled,true);
   for (const [id] of values) {
@@ -711,7 +1061,7 @@ test('恢复默认保存五项参数，阻止并发修改，重开页面仍显�
   assert.equal(ui.writes,1,'恢复期间不得并发保存');
   release();
   await resetting;
-  assert.equal(ui.writes,5);
+  assert.equal(ui.writes,7);
   assert.equal(ui.el('advReset').disabled,false);
   assert.match(ui.el('advSaveStatus').textContent,/已恢复默认并回读确认/);
   assert.equal(settings.UFCS_LIMIT_MV,'4200');
@@ -738,7 +1088,7 @@ test('恢复中途保存失败时提示未完成，显示实际值并允许重�
   await new Promise(resolve=>setImmediate(resolve));
   await ui.el('advReset').emit('click');
   assert.match(ui.el('advSaveStatus').textContent,/恢复默认未完成/);
-  assert.equal(ui.el('advInitialInput').value,'1000');
+  assert.equal(ui.el('advInitialInput').value,'2000');
   assert.equal(ui.el('advIntervalInput').value,'90');
   assert.equal(ui.el('advReset').disabled,false);
   assert.equal(ui.el('advLowerInput').disabled,false);
@@ -787,6 +1137,46 @@ test('高级参数保存后重开 WebUI，滑动条、输入框和数值显示�
     assert.equal(reopened.el(id+'Value').textContent,value,id+' 显示值');
   }
   assert.equal(reopened.writes,0,'重新打开页面不得写入默认参数');
+});
+
+test('提前降流两项联动，0 时禁止调步进，保存与重开持久化，关闭保留步进且恢复当前预设',async()=>{
+  const settings={},flush=()=>new Promise(r=>setImmediate(r)),ui=openWebUi(settings);await flush();
+  assert.equal(ui.el('advEarlyGapInput').value,'0');assert.equal(ui.el('advEarlyStepInput').value,'0');
+  assert.equal(ui.el('advEarlyStepInput').disabled,true);
+  ui.el('advEarlyStepInput').value='100';await ui.el('advEarlyStepInput').emit('change');assert.equal(ui.writes,0);
+  for(const raw of ['-51','1','-1.5']) {
+    ui.el('advEarlyGapInput').value=raw;await ui.el('advEarlyGapInput').emit('change');
+  }
+  assert.equal(ui.writes,0);
+  ui.el('advEarlyGapRange').value='-50';ui.el('advEarlyGapRange').emit('input');
+  assert.equal(ui.el('advEarlyGapInput').value,'-50');assert.equal(ui.el('advEarlyStepInput').disabled,true,'仅拖动草稿不解锁');
+  await ui.el('advEarlyGapRange').emit('change');assert.equal(ui.el('advEarlyStepInput').disabled,false);
+  for(const raw of ['-1','1001','1.5']) {ui.el('advEarlyStepInput').value=raw;await ui.el('advEarlyStepInput').emit('change');}
+  assert.equal(ui.writes,1);
+  for(const value of ['0','1000','50']) {
+    ui.el('advEarlyStepInput').value=value;ui.el('advEarlyStepInput').emit('input');
+    assert.equal(ui.el('advEarlyStepRange').value,value);await ui.el('advEarlyStepInput').emit('change');
+    assert.equal(settings.EARLY_STEP_MA,value);
+  }
+  const reopened=openWebUi(settings);await flush();
+  assert.equal(reopened.el('advEarlyGapInput').value,'-50');assert.equal(reopened.el('advEarlyStepInput').value,'50');
+  assert.equal(reopened.el('advEarlyStepInput').disabled,false);
+  reopened.el('advEarlyGapInput').value='0';await reopened.el('advEarlyGapInput').emit('change');
+  assert.equal(reopened.el('advEarlyStepInput').disabled,true);assert.equal(settings.EARLY_STEP_MA,'50');
+  await reopened.el('advReset').emit('click');
+  assert.equal(settings.EARLY_GAP_MV,'-10');assert.equal(settings.EARLY_STEP_MA,'200');assert.equal(reopened.el('advEarlyStepInput').disabled,false);
+});
+
+test('提前降流压差保存中锁定配套步进，失败保持实际值并允许重试',async()=>{
+  let release,fail=true;
+  const ui=openWebUi({},field=>field==='early-gap'?new Promise((resolve,reject)=>{release=()=>fail?reject(new Error('存储不可写')):resolve();}):undefined);
+  await new Promise(r=>setImmediate(r));ui.el('advEarlyGapInput').value='-10';
+  let pending=ui.el('advEarlyGapInput').emit('change');await new Promise(r=>setImmediate(r));
+  assert.equal(ui.el('advEarlyStepInput').disabled,true);ui.el('advEarlyStepInput').value='20';await ui.el('advEarlyStepInput').emit('change');assert.equal(ui.writes,1);
+  release();await pending;assert.equal(ui.el('advEarlyGapInput').value,'0');assert.equal(ui.el('advEarlyStepInput').disabled,true);
+  assert.match(ui.el('advSaveStatus').textContent,/失败.*存储不可写/);
+  fail=false;ui.el('advEarlyGapInput').value='-10';pending=ui.el('advEarlyGapInput').emit('change');await new Promise(r=>setImmediate(r));release();await pending;
+  assert.equal(ui.el('advEarlyStepInput').disabled,false);
 });
 
 
@@ -926,4 +1316,95 @@ test('horae 应用结果不成功时页面不能报告保存成功，并显示�
   assert.match(ui.el('fakeSaveStatus').textContent,/未应用成功/);
   assert.doesNotMatch(ui.el('fakeSaveStatus').textContent,/已保存并回读确认/);
   assert.equal(ui.el('fakeSwitch').disabled,false);
+});
+
+test('自适应伪装默认关闭，开启后与固定温度互斥，并显示真实温度和写入值',async()=>{
+  const settings={FAKETEMP_ENABLED:'YES'};const ui=openWebUi(settings);
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(ui.el('fakeAdaptiveSwitch').checked,false);
+  assert.equal(ui.el('fakeOffsetInput').value,'5');
+  ui.el('fakeAdaptiveSwitch').checked=true;await ui.el('fakeAdaptiveSwitch').emit('change');
+  assert.equal(ui.el('fakeAdaptiveSwitch').checked,true);
+  assert.equal(ui.el('fakeSwitch').checked,false);
+  assert.equal(ui.el('fakeValueInput').disabled,true);
+  assert.equal(ui.el('fakeTag').textContent,'自适应');
+  assert.match(ui.el('fakeAdaptiveReading').textContent,/40\.0°C → 伪装温度 35\.0°C/);
+  ui.el('fakeOffsetRange').value='20';ui.el('fakeOffsetRange').emit('input');
+  assert.equal(ui.el('fakeOffsetInput').value,'20');
+  assert.equal(ui.el('fakeOffsetValue').textContent,'20');
+  await ui.el('fakeOffsetRange').emit('change');
+  assert.equal(settings.FAKETEMP_OFFSET_C,'20');
+  assert.match(ui.el('fakeAdaptiveReading').textContent,/40\.0°C → 伪装温度 20\.0°C/);
+  const reopened=openWebUi(settings);await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(reopened.el('fakeAdaptiveSwitch').checked,true);
+  assert.equal(reopened.el('fakeOffsetInput').value,'20');
+  reopened.el('fakeSwitch').checked=true;await reopened.el('fakeSwitch').emit('change');
+  assert.equal(reopened.el('fakeAdaptiveSwitch').checked,false);
+  assert.equal(reopened.el('fakeSwitch').checked,true);
+  assert.equal(reopened.el('fakeValueInput').disabled,false);
+  assert.match(reopened.el('fakeSaveStatus').textContent,/回读确认/);
+});
+
+test('自适应温差输入接受 0，拒绝空值、越界与非整数，关闭时修改不启用伪装',async()=>{
+  const settings={};const ui=openWebUi(settings);await new Promise(resolve=>setImmediate(resolve));
+  ui.el('fakeOffsetInput').value='0';ui.el('fakeOffsetInput').emit('input');
+  await ui.el('fakeOffsetInput').emit('change');
+  assert.equal(settings.FAKETEMP_OFFSET_C,'0');assert.equal(ui.el('fakeAdaptiveSwitch').checked,false);
+  const writes=ui.writes;
+  for(const value of ['','-1','21','1.5','1;echo bad']) {
+    ui.el('fakeOffsetInput').value=value;await ui.el('fakeOffsetInput').emit('change');
+    assert.match(ui.el('fakeSaveStatus').textContent,/0–20/);assert.equal(ui.writes,writes);
+  }
+});
+
+test('自适应温度读取失败时显示异常和空读数，不能报告成功',async()=>{
+  const settings={FAKETEMP_ENABLED:'NO',FAKETEMP_ADAPTIVE_ENABLED:'YES',FAKETEMP_STATE:'SENSOR_ERROR',
+    FAKETEMP_HORAE_STATE:'NORMAL_SENT',FAKETEMP_REAL_DECI:'UNKNOWN',FAKETEMP_TARGET_DECI:'UNKNOWN'};
+  const ui=openWebUi(settings);await new Promise(resolve=>setImmediate(resolve));
+  assert.match(ui.el('fakeStatus').textContent,/读取异常/);
+  assert.match(ui.el('fakeAdaptiveReading').textContent,/等待有效/);
+  ui.el('fakeOffsetInput').value='10';await ui.el('fakeOffsetInput').emit('change');
+  assert.match(ui.el('fakeSaveStatus').textContent,/未应用成功/);
+  assert.equal(ui.el('fakeAdaptiveSwitch').disabled,false);
+});
+
+test('自适应温度每秒刷新，保留草稿，切模式后丢弃旧响应且离页不再读取',async()=>{
+  const settings={FAKETEMP_ENABLED:'NO',FAKETEMP_ADAPTIVE_ENABLED:'YES',FAKETEMP_STATE:'APPLIED',
+    FAKETEMP_HORAE_STATE:'TEST_SENT',FAKETEMP_REAL_DECI:'400',FAKETEMP_TARGET_DECI:'350'};
+  let hold=false, release, reads=0;
+  const old='FAKETEMP_ENABLED=NO;FAKETEMP_ADAPTIVE_ENABLED=YES;FAKETEMP_VALUE_DECI=360;FAKETEMP_OFFSET_C=5;FAKETEMP_STATE=APPLIED;FAKETEMP_HORAE_STATE=TEST_SENT;FAKETEMP_REAL_DECI=400;FAKETEMP_TARGET_DECI=350;';
+  const ui=openWebUi(settings,undefined,cmd=>{
+    if(cmd.endsWith('--faketemp-status')) {
+      reads++;
+      if(hold) {hold=false;return new Promise(resolve=>{release=()=>resolve(old);});}
+    }
+  });
+  const flush=()=>new Promise(resolve=>setImmediate(resolve));await flush();
+  const tick=ui.timers.find(item=>item.ms===1000).fn;
+  ui.el('tab-control').emit('click');ui.entries.find(item=>item.dataset.detail==='faketemp').emit('click');await flush();
+  settings.FAKETEMP_REAL_DECI='410';settings.FAKETEMP_TARGET_DECI='360';
+  ui.doc.activeElement=ui.el('fakeOffsetInput');ui.el('fakeOffsetInput').value='12';await tick();
+  assert.match(ui.el('fakeAdaptiveReading').textContent,/41\.0°C → 伪装温度 36\.0°C/);
+  assert.equal(ui.el('fakeOffsetInput').value,'12');ui.doc.activeElement=null;
+  hold=true;const pending=tick();await flush();
+  ui.el('fakeSwitch').checked=true;await ui.el('fakeSwitch').emit('change');
+  release();await pending;
+  assert.equal(ui.el('fakeSwitch').checked,true);assert.equal(ui.el('fakeAdaptiveSwitch').checked,false);
+  const before=reads;ui.doc.hidden=true;await tick();assert.equal(reads,before);
+  ui.doc.hidden=false;ui.el('tab-overview').emit('click');await tick();assert.equal(reads,before);
+});
+
+test('自适应响应温差、互斥标记或真实/写入温度损坏时不能报告成功',async()=>{
+  const base={FAKETEMP_ENABLED:'NO',FAKETEMP_ADAPTIVE_ENABLED:'YES',FAKETEMP_VALUE_DECI:'360',
+    FAKETEMP_OFFSET_C:'5',FAKETEMP_STATE:'APPLIED',FAKETEMP_HORAE_STATE:'TEST_SENT',
+    FAKETEMP_REAL_DECI:'400',FAKETEMP_TARGET_DECI:'350'};
+  for(const bad of [{FAKETEMP_OFFSET_C:''},{FAKETEMP_ENABLED:'YES'},{FAKETEMP_REAL_DECI:'UNKNOWN'},
+    {FAKETEMP_TARGET_DECI:'999999999'},{FAKETEMP_TARGET_DECI:'340'}]) {
+    const ui=openWebUi({...base},undefined,cmd=>cmd.endsWith('--faketemp-status')
+      ? Object.entries({...base,...bad}).map(([key,value])=>key+'='+value).join(';'):undefined);
+    await new Promise(resolve=>setImmediate(resolve));
+    ui.el('fakeOffsetInput').value='5';await ui.el('fakeOffsetInput').emit('change');
+    assert.match(ui.el('fakeSaveStatus').textContent,/响应无效|回读值不一致/);
+    assert.doesNotMatch(ui.el('fakeSaveStatus').textContent,/已保存并回读确认/);
+  }
 });

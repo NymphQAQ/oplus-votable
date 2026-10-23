@@ -194,52 +194,59 @@
     .nav-tab svg { width:21px; height:21px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
     .nav-tab[aria-selected="true"] { color:var(--accent); background:var(--panel2); }
     .nav-tab:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
-    body[data-page="history"] { background:#ededed; }
-    body[data-page="history"] .wrap { padding-left:14px; padding-right:14px; }
+    body[data-page="history"] { background:#f1f3f5; }
+    body[data-page="history"] .wrap { padding:max(10px, env(safe-area-inset-top)) 12px calc(76px + env(safe-area-inset-bottom)); }
     body[data-page="history"] .topbar { display:none; }
     body[data-page="history"] .bottom-nav { background:#fff; border-color:#e5e5e5; }
     body[data-page="history"] .nav-tab { color:#808080; }
     body[data-page="history"] .nav-tab[aria-selected="true"] { color:#1677e8; background:#edf3fb; }
-    #page-history { --bg:#ededed; --panel:#fff; --panel2:#f4f4f4; --stroke:#e9e9e9; --text:#292929; --muted:#808080; --accent:#1677e8; --red:#b94444; color-scheme:light; color:var(--text); }
-    .history-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; margin:6px 0 20px; }
-    .history-heading h2 { margin:0; font-size:22px; font-weight:600; letter-spacing:.02em; white-space:nowrap; }
+    #page-history { --bg:#f1f3f5; --panel:#fff; --panel2:#f4f4f4; --stroke:#e9e9e9; --text:#292929; --muted:#68717b; --accent:#1677e8; --red:#b94444; color-scheme:light; color:var(--text); }
+    .history-heading { display:flex; align-items:center; justify-content:space-between; gap:8px; margin:0 0 6px; }
+    .history-heading h2 { margin:0; font-size:18px; font-weight:600; white-space:nowrap; }
     .history-title { display:flex; align-items:center; gap:5px; }
-    .history-actions { display:flex; align-items:center; gap:7px; }
-    .history-icon-button { display:grid; place-items:center; width:42px; height:44px; padding:0; border:0; background:transparent; color:#303030; border-radius:10px; }
+    .history-actions { display:flex; align-items:center; gap:2px; }
+    .history-icon-button { display:grid; place-items:center; width:44px; height:44px; padding:0; border:0; background:transparent; color:#303030; border-radius:10px; }
     .history-icon-button svg, .history-reading svg { width:22px; height:22px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
-    #historyLive { min-height:40px; padding:8px 12px; border:0; border-radius:20px; color:#737373; background:#e4e4e4; font-size:12px; }
+    #historyLive { min-height:44px; padding:8px 10px; border:0; border-radius:12px; color:#59636f; background:#e4e8ed; font-size:12px; }
     #historyLive[aria-pressed="true"] { color:#1677e8; background:#e0ebfa; }
-    .history-toolbar { display:flex; gap:9px; flex-wrap:wrap; align-items:center; margin-bottom:16px; }
+    .history-toolbar { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:8px; padding:10px; }
     .history-toolbar .select { flex:1 1 100%; width:100%; min-width:0; min-height:44px; font-size:13px; }
     .history-toolbar .button { min-height:44px; }
-    .history-hero { display:grid; grid-template-columns:minmax(104px,.9fr) minmax(0,1.4fr); align-items:center; gap:18px; padding:22px 18px; background:#fff; border-radius:18px; }
-    .history-gauge { position:relative; width:100%; max-width:158px; aspect-ratio:1; margin:auto; }
+    .history-hero { display:grid; grid-template-columns:60px minmax(0,1fr); align-items:center; gap:12px; padding:8px 12px; background:#fff; border-radius:12px; }
+    .history-gauge { position:relative; width:60px; aspect-ratio:1; }
     .history-gauge svg { display:block; width:100%; height:100%; transform:rotate(-90deg); }
     .history-gauge circle { fill:none; stroke-width:15; }
     .history-gauge-track { stroke:#efefef; }
-    .history-gauge-fill { stroke:#1677e8; stroke-linecap:round; }
-    .history-gauge-value { position:absolute; inset:0; display:grid; place-items:center; font-size:clamp(25px,7vw,43px); font-weight:400; color:#626262; font-variant-numeric:tabular-nums; white-space:nowrap; }
-    .history-readings { border-left:1px solid #eee; padding-left:18px; min-width:0; }
-    .history-charge-state { margin:0 0 19px; color:#303030; font-size:17px; font-weight:500; }
-    .history-reading-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:17px 10px; }
-    .history-reading { display:flex; align-items:center; gap:5px; min-width:0; color:#7b7b7b; font-size:12px; font-variant-numeric:tabular-nums; white-space:nowrap; }
-    .history-reading svg { width:15px; height:15px; flex-shrink:0; color:#9a9a9a; }
-    .history-cell-toggle { margin:20px 0 0; gap:7px; font-size:11px; justify-content:space-between; }
-    .history-cell-toggle .switch-text { color:#808080; font-weight:400; }
+    .history-gauge-fill { stroke:#16803c; stroke-linecap:round; }
+    .history-gauge-value { position:absolute; inset:0; display:grid; place-items:center; font-size:18px; font-weight:600; color:#303b35; font-variant-numeric:tabular-nums; white-space:nowrap; }
+    .history-readings { min-width:0; }
+    .history-charge-state { margin:0; color:#303030; font-size:14px; line-height:20px; font-weight:600; }
+    .history-cell-toggle { margin:0; padding:6px 8px; min-height:48px; gap:6px; border:1px solid #e6ebef; border-radius:8px; font-size:11px; justify-content:space-between; }
+    .history-cell-toggle .switch-text { color:#59636f; font-weight:500; }
     .history-cell-toggle .switch-track { width:34px; height:20px; border-radius:12px; }
     .history-cell-toggle .switch-track::after { width:14px; height:14px; }
     .history-cell-toggle input:checked + .switch-track::after { transform:translateX(14px); background:#fff; }
-    .history-session-strip { display:flex; flex-wrap:wrap; align-items:center; gap:8px 16px; margin-top:2px; padding:16px; background:#fff; border-radius:14px; color:#808080; font-size:12px; line-height:1.6; font-variant-numeric:tabular-nums; }
-    #historySessionTime { flex:1 1 auto; }
-    #historyState { margin:10px 4px 15px; font-size:11px; }
+    .history-session-strip { display:flex; flex-wrap:wrap; align-items:center; gap:1px 10px; color:var(--muted); font-size:11px; line-height:16px; font-variant-numeric:tabular-nums; }
+    #historySessionTime { flex-basis:100%; overflow-wrap:anywhere; }
+    #historyState { margin:6px 2px; font-size:11px; }
     #historyError { margin:0 4px; }
     #historyError:empty { display:none; }
-    .history-chart { margin:16px 0 0; padding:17px 13px 10px; background:#fff; border:0; border-radius:18px; min-width:0; }
-    .history-chart figcaption { display:flex; align-items:center; justify-content:space-between; gap:10px; margin:0 3px 8px; color:#535353; font-size:15px; font-weight:500; }
-    .history-chart-value { color:#1677e8; font-size:12px; font-weight:400; font-variant-numeric:tabular-nums; }
-    .history-canvas { display:block; width:100%; height:clamp(180px,49vw,260px); touch-action:pan-y; }
-    .history-settings { margin-top:17px; border:0; background:#e5e5e5; }
-    .history-settings > summary { font-weight:500; color:#626262; }
+    .history-chart { margin:8px 0 0; padding:10px 10px 8px; background:#fff; border:0; border-radius:12px; min-width:0; }
+    .history-chart figcaption { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:2px 8px; margin:0 2px 6px; color:#424c56; font-size:13px; line-height:18px; font-weight:600; }
+    #historyAxisLabel { margin:0; font-size:10px; }
+    .history-chart-values { display:flex; justify-content:space-between; align-items:baseline; gap:4px; width:100%; min-width:0; font-size:12px; font-variant-numeric:tabular-nums; }
+    .history-chart-max { color:#68717b; font-size:10px; white-space:nowrap; }
+    .history-chart-value { color:#26313c; font-weight:650; white-space:nowrap; }
+    .history-legend { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:4px; margin-bottom:6px; }
+    .history-series { display:grid; gap:2px; width:100%; min-width:0; min-height:48px; padding:4px 6px; border:1px solid #e6ebef; border-radius:8px; text-align:left; color:#535353; background:transparent; }
+    .history-series[aria-pressed="true"] { background:#f1f5f8; border-color:#dce5eb; }
+    .history-series:focus-visible { outline:2px solid var(--series-color); outline-offset:1px; }
+    .history-series-name { display:flex; align-items:center; gap:5px; font-size:11px; line-height:14px; font-weight:500; white-space:nowrap; }
+    .history-series-name::before { content:""; width:14px; border-top:2px solid var(--series-color); }
+    .history-axis-note { display:flex; justify-content:space-between; gap:8px; margin:4px 2px 0; font-size:10px; line-height:16px; color:#68717b; }
+    .history-canvas { display:block; width:100%; height:clamp(160px,calc(100vh - 494px),400px); height:clamp(160px,calc(100dvh - 494px - env(safe-area-inset-top) - env(safe-area-inset-bottom)),400px); touch-action:none; }
+    .history-settings { margin-top:6px; padding:0 10px; border:0; background:#e5e9ed; }
+    .history-settings > summary { display:list-item; min-height:44px; padding:12px 0; font-size:12px; font-weight:500; color:#59636f; }
     .history-range { margin-top:18px; }
     .history-range-label { display:flex; justify-content:space-between; gap:12px; font-size:12px; color:var(--muted); font-variant-numeric:tabular-nums; }
     .history-range input { width:100%; min-height:44px; accent-color:var(--accent); touch-action:pan-y; }
@@ -247,7 +254,7 @@
     .history-table { width:100%; border-collapse:collapse; font-size:12px; white-space:nowrap; }
     .history-table th, .history-table td { text-align:right; padding:12px 8px; border-bottom:1px solid #d6d6d6; }
     .history-table th:first-child, .history-table td:first-child { text-align:left; }
-    @media (max-width:360px) { .history-hero { padding:20px 13px; gap:12px; } .history-readings { padding-left:12px; } .history-reading-grid { gap:16px 6px; } .history-reading { font-size:11px; gap:3px; } }
+    @media (max-width:360px) { .history-heading h2 { font-size:16px; } .history-chart-values { flex-wrap:wrap; } .history-chart-value { margin-left:auto; } }
     @media (min-width:620px) { .protocol-list { grid-template-columns:repeat(3,minmax(0,1fr)); } }
     #error { background:color-mix(in srgb,var(--red) 9%,var(--panel)); border:1px solid color-mix(in srgb,var(--red) 33%,var(--stroke)); padding:12px; border-radius:10px; color:var(--red); font-size:12px; margin-bottom:14px; white-space:pre-wrap; }
     [hidden] { display:none !important; }
@@ -255,8 +262,8 @@
     @media (max-width:390px) { .wrap {padding-left:13px;padding-right:13px;} .brandmark{width:39px;height:39px;} h1{font-size:19px;} }
   </style>
   <script src="./log-utils.js" defer></script>
-  <script src="./charging-history.js?v=0.9.12" defer></script>
-  <script src="./app.js?v=0.9.12" defer></script>
+  <script src="./charging-history.js?v=0.9.29" defer></script>
+  <script src="./app.js?v=0.9.29" defer></script>
 </head>
 <body>
   <main class="wrap">
@@ -265,13 +272,13 @@
         <div class="brandmark" aria-hidden="true">U</div>
         <div><h1>oplus-votable</h1><div class="subtitle">电流控制 · 电池实时状态</div></div>
       </div>
-      <span class="pill">ADAPTIVE · v0.9.12</span>
+      <span class="pill">ADAPTIVE · v0.9.29</span>
     </header>
 
     <div id="error" role="alert" hidden></div>
     <section id="page-control" class="tab-page" role="tabpanel" aria-labelledby="tab-control" hidden>
     <div id="control-index">
-    <div class="notice"><strong>oplus-votable 电流控制</strong> · 仅在 UFCS / PPS 协议在线且对应开关开启时，使用自适应投票值控制电流上限。VOOC / SUPERVOOC 仍可只读识别和诊断，不再进行主动电流控制。UFCS 默认电压 4560 mV / 投票上限 9000 mA；PPS 默认电压 4500 mV / 投票上限 5000 mA，最高 5800 mA。温度控制默认关闭，可在设置中开启。温度伪装独立于温度控制，默认关闭，可在设置中开启。</div>
+    <div class="notice"><strong>oplus-votable 电流控制</strong> · 仅在 UFCS / PPS 协议在线且对应开关开启时，使用自适应投票值控制电流上限。VOOC / SUPERVOOC 仍可只读识别和诊断，不再进行主动电流控制。UFCS 默认电压 4560 mV / 投票上限 10900 mA；PPS 默认电压 4460 mV / 投票上限 5800 mA。温度控制默认开启、上限 50°C；温度伪装默认开启、36°C，可在设置中调整。</div>
     <div class="section-head"><h2>电流控制</h2><small>自适应 · 仅 UFCS / PPS 双协议调参</small></div>
     <section class="status-panel" aria-label="电流控制总览">
       <p id="controlReadiness" class="detail" aria-live="polite">正在读取控制状态…</p>
@@ -305,6 +312,16 @@
         <span class="entry-body"><strong>温度控制</strong><small>电池温度上限、限流值、恢复温差</small></span>
         <span class="proto-tag" id="thermalTag">读取中…</span><span class="entry-chevron" aria-hidden="true">›</span>
       </button>
+      <button class="control-entry" type="button" data-detail="cv" aria-controls="control-detail-cv">
+        <span class="entry-icon" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 17h4l3-10 4 10h7M3 4v16h18"/></svg></span>
+        <span class="entry-body"><strong>恒压调节</strong><small>启用电量、目标压差、保持范围、步进与等待</small></span>
+        <span class="proto-tag" id="cvTag">读取中…</span><span class="entry-chevron" aria-hidden="true">›</span>
+      </button>
+      <button class="control-entry" type="button" data-detail="handoff" aria-controls="control-detail-handoff">
+        <span class="entry-icon" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h15l-4-4M20 17H5l4 4M20 7v4M4 17v-4"/></svg></span>
+        <span class="entry-body"><strong>系统接管</strong><small>按电量交回系统、旁路供电自动避让</small></span>
+        <span class="proto-tag" id="handoffTag">读取中…</span><span class="entry-chevron" aria-hidden="true">›</span>
+      </button>
       <button class="control-entry" type="button" data-detail="pulse" aria-controls="control-detail-pulse">
         <span class="entry-icon" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 5v14M17 5v14M3 12h18"/></svg></span>
         <span class="entry-body"><strong>间断充电</strong><small>充电时间、断开时间、生效电量区间</small></span>
@@ -312,7 +329,7 @@
       </button>
       <button class="control-entry" type="button" data-detail="faketemp" aria-controls="control-detail-faketemp">
         <span class="entry-icon" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20M4.2 6.5l15.6 11M19.8 6.5 4.2 17.5"/></svg></span>
-        <span class="entry-body"><strong>温度伪装</strong><small>horae 测试模式 · 固定外壳温度</small></span>
+        <span class="entry-body"><strong>温度伪装</strong><small>固定温度 / 自适应温差 · 二选一</small></span>
         <span class="proto-tag" id="fakeTag">读取中…</span><span class="entry-chevron" aria-hidden="true">›</span>
       </button>
     </section>
@@ -324,7 +341,7 @@
       </div>
       <div class="proto-body">
         <label class="switch-row">
-          <input type="checkbox" id="protoSwitchUFCS" role="switch">
+          <input type="checkbox" id="protoSwitchUFCS" role="switch" checked>
           <span class="switch-track" aria-hidden="true"></span>
           <span class="switch-text">协议开关：<span id="protoStateUFCS">读取中…</span></span>
         </label>
@@ -338,9 +355,9 @@
         </div>
         <div class="limit-control">
           <div class="name">投票值上限（mA）</div>
-          <input type="range" id="voteMaxRangeUFCS" min="1000" max="13500" step="50" value="9000" aria-label="UFCS 投票值上限滑动条">
-          <input type="number" id="voteMaxInputUFCS" min="1000" max="13500" step="50" value="9000" aria-label="UFCS 投票值上限输入框">
-          <div class="detail">投票值上限：<strong id="voteMaxValueUFCS">9000</strong> mA · 默认 9000，可调范围 1000–13500</div>
+          <input type="range" id="voteMaxRangeUFCS" min="1000" max="13500" step="50" value="10900" aria-label="UFCS 投票值上限滑动条">
+          <input type="number" id="voteMaxInputUFCS" min="1000" max="13500" step="50" value="10900" aria-label="UFCS 投票值上限输入框">
+          <div class="detail">投票值上限：<strong id="voteMaxValueUFCS">10900</strong> mA · 默认 10900，可调范围 1000–13500</div>
         </div>
         <div class="vote-note">检测到 UFCS 且协议开关开启时自动接管（投票值单位 mA）。投票值从「投票初始值」起步，每「监控时间」检查一次：电压低于「设定值 + 升流截止压差」时按「提升步进」上升（最高为投票值上限）；电压超过设定值时按「降低步进」下降（最低 1000 mA）；两者之间保持不变。协议不再在线或开关关闭时立即撤销并入日志。</div>
         <button type="button" id="protoResetUFCS" class="button">恢复默认</button>
@@ -366,7 +383,7 @@
       </div>
       <div class="proto-body">
         <label class="switch-row">
-          <input type="checkbox" id="protoSwitchPPS" role="switch">
+          <input type="checkbox" id="protoSwitchPPS" role="switch" checked>
           <span class="switch-track" aria-hidden="true"></span>
           <span class="switch-text">协议开关：<span id="protoStatePPS">读取中…</span></span>
         </label>
@@ -374,15 +391,15 @@
         <div class="metric"><div class="name">当前投票值</div><div id="targetValuePPS" class="value">—</div></div>
         <div class="limit-control">
           <div class="name">设定电压（mV）</div>
-          <input type="range" id="limitRangePPS" min="3800" max="4560" step="10" value="4500" aria-label="PPS 设定电压滑动条">
-          <input type="number" id="limitInputPPS" min="3800" max="4560" step="10" value="4500" aria-label="PPS 设定电压输入框">
-          <div class="detail">设定电压：<strong id="limitValuePPS">4500</strong> mV · 默认 4500，可调范围 3800–4560</div>
+          <input type="range" id="limitRangePPS" min="3800" max="4560" step="10" value="4460" aria-label="PPS 设定电压滑动条">
+          <input type="number" id="limitInputPPS" min="3800" max="4560" step="10" value="4460" aria-label="PPS 设定电压输入框">
+          <div class="detail">设定电压：<strong id="limitValuePPS">4460</strong> mV · 默认 4460，可调范围 3800–4560</div>
         </div>
         <div class="limit-control">
           <div class="name">投票值上限（mA）</div>
-          <input type="range" id="voteMaxRangePPS" min="1000" max="5800" step="50" value="5000" aria-label="PPS 投票值上限滑动条">
-          <input type="number" id="voteMaxInputPPS" min="1000" max="5800" step="50" value="5000" aria-label="PPS 投票值上限输入框">
-          <div class="detail">投票值上限：<strong id="voteMaxValuePPS">5000</strong> mA · 默认 5000，最高 5800；已有有效配置保留</div>
+          <input type="range" id="voteMaxRangePPS" min="1000" max="5800" step="50" value="5800" aria-label="PPS 投票值上限滑动条">
+          <input type="number" id="voteMaxInputPPS" min="1000" max="5800" step="50" value="5800" aria-label="PPS 投票值上限输入框">
+          <div class="detail">投票值上限：<strong id="voteMaxValuePPS">5800</strong> mA · 默认 5800，最高 5800；已有有效配置保留</div>
         </div>
         <div class="vote-note">检测到 PPS 且协议开关开启时自动接管 PPS_CURR（投票值单位 mA）。投票值从「投票初始值」起步，每「监控时间」检查一次：电压低于「设定值 + 升流截止压差」时按「提升步进」上升（最高为投票值上限）；电压超过设定值时按「降低步进」下降（最低 1000 mA）；两者之间保持不变。协议不再在线或开关关闭时立即撤销并入日志。异常时可能无法自动恢复，请确保能够随时拔掉充电线。</div>
         <button type="button" id="protoResetPPS" class="button">恢复默认</button>
@@ -397,18 +414,19 @@
       <div class="proto-body">
         <p id="advSaveStatus" class="save-status" role="status">设置自动保存到模块私有目录，重启后继续生效。</p>
         <p class="adv-note">这里的参数为高级参数，非必要请勿调节。这些参数直接对应控制算法，修改后立即对 UFCS / PPS 生效。</p>
+        <p class="vote-note">后段电压反馈的启用电量、目标压差、保持范围、步进上限、等待时间和快速降流触发压差，可在控制页的“恒压调节”中设置。恒压期间轻微越界按本页步进和等待调节，达到配置的快速降流压差时立即降流。</p>
         <div class="limit-control">
           <div class="name">投票初始值（mA）</div>
-          <input type="range" id="advInitialRange" min="1000" max="10000" step="100" value="1000" aria-label="投票初始值滑动条">
-          <input type="number" id="advInitialInput" min="1000" max="10000" step="100" value="1000" aria-label="投票初始值输入框">
-          <div class="detail">投票初始值：<strong id="advInitialValue">1000</strong> mA · 默认 1000，可调范围 1000–10000 · 数值越高，投票越快到达设定值</div>
+          <input type="range" id="advInitialRange" min="1000" max="10000" step="100" value="2000" aria-label="投票初始值滑动条">
+          <input type="number" id="advInitialInput" min="1000" max="10000" step="100" value="2000" aria-label="投票初始值输入框">
+          <div class="detail">投票初始值：<strong id="advInitialValue">2000</strong> mA · 默认 2000，可调范围 1000–10000 · 数值越高，投票越快到达设定值</div>
         </div>
         <div class="setting-divider" role="separator" aria-hidden="true"></div>
         <div class="limit-control">
           <div class="name">监控时间（ms）</div>
           <input type="range" id="advIntervalRange" min="20" max="200" step="10" value="100" aria-label="监控时间滑动条">
           <input type="number" id="advIntervalInput" min="20" max="200" step="10" value="100" aria-label="监控时间输入框">
-          <div class="detail">监控时间：<strong id="advIntervalValue">100</strong> ms · 默认 100，可调范围 20–200 · 时间越短，功率曲线越平滑</div>
+          <div class="detail">监控时间：<strong id="advIntervalValue">100</strong> ms · 默认 100，可调范围 20–200 · 目标检查周期，实际受系统调度影响；调度迟到时补齐降流步数，升流不补步</div>
         </div>
         <div class="setting-divider" role="separator" aria-hidden="true"></div>
         <div class="limit-control">
@@ -420,9 +438,9 @@
         <div class="setting-divider" role="separator" aria-hidden="true"></div>
         <div class="limit-control">
           <div class="name">降低步进（mA）</div>
-          <input type="range" id="advLowerRange" min="100" max="1000" step="10" value="500" aria-label="降低步进滑动条">
-          <input type="number" id="advLowerInput" min="100" max="1000" step="10" value="500" aria-label="降低步进输入框">
-          <div class="detail">降低步进：<strong id="advLowerValue">500</strong> mA · 默认 500，可调范围 100–1000 · 步进越低，功率下降越慢，曲线更平滑，但是可能导致电池电压过高，触发强制协议降级，功率直接降为 0</div>
+          <input type="range" id="advLowerRange" min="100" max="1000" step="10" value="1000" aria-label="降低步进滑动条">
+          <input type="number" id="advLowerInput" min="100" max="1000" step="10" value="1000" aria-label="降低步进输入框">
+          <div class="detail">降低步进：<strong id="advLowerValue">1000</strong> mA · 默认 1000，可调范围 100–1000 · 步进越低，功率下降越慢，曲线更平滑，但是可能导致电池电压过高，触发强制协议降级，功率直接降为 0</div>
         </div>
         <div class="setting-divider" role="separator" aria-hidden="true"></div>
         <div class="limit-control">
@@ -431,7 +449,117 @@
           <input type="number" id="advGapInput" min="-100" max="0" step="10" value="-50" aria-label="升流截止压差输入框">
           <div class="detail">升流截止压差：<strong id="advGapValue">-50</strong> mV · 默认 -50，可调范围 -100–0 · 电池电压达到「设定电压 + 截止压差」时停止升流。数值越低，充电功率越稳定，但是会降低功率上限</div>
         </div>
+        <div class="setting-divider" role="separator" aria-hidden="true"></div>
+        <div class="limit-control">
+          <div class="name">提前降流压差（mV）</div>
+          <input type="range" id="advEarlyGapRange" min="-50" max="0" step="1" value="-10" aria-label="提前降流压差滑动条" aria-describedby="advEarlyNote">
+          <input type="number" id="advEarlyGapInput" min="-50" max="0" step="1" value="-10" aria-label="提前降流压差输入框" aria-describedby="advEarlyNote">
+          <div class="detail">压差：<strong id="advEarlyGapValue">-10</strong> mV · 默认 -10，可调 -50–0；小于 0 时可设置下方步进</div>
+        </div>
+        <div class="setting-divider" role="separator" aria-hidden="true"></div>
+        <div class="limit-control">
+          <div class="name">提前降流步进（mA）</div>
+          <input type="range" id="advEarlyStepRange" min="0" max="1000" step="1" value="200" aria-label="提前降流步进滑动条" aria-describedby="advEarlyNote">
+          <input type="number" id="advEarlyStepInput" min="0" max="1000" step="1" value="200" aria-label="提前降流步进输入框" aria-describedby="advEarlyNote">
+          <div class="detail">每次降低 <strong id="advEarlyStepValue">200</strong> mA · 默认 200，可调 0–1000</div>
+        </div>
+        <p id="advEarlyNote" class="vote-note">两项配合生效，适用于 UFCS / PPS。电压达到“协议设定电压 + 提前降流压差”且尚未超限时，按此步进降低投票。例如 4560mV、-10mV、50mA 表示从 4550mV 开始每次降低 50mA。每次成功写入后，按恒压页的“调整后等待时间”（默认 1.5 秒）等待响应，期间保持投票；进入恒压后还会遵守其写入等待。普通降流下限为 1000mA，超限降流、温控和系统接管继续优先。压差设回 0 时关闭提前降流并保留步进，恢复默认会设为 −10mV 和 200mA。</p>
         <button type="button" id="advReset" class="button">恢复默认</button>
+      </div>
+    </section>
+    <section id="control-detail-handoff" class="control-detail" hidden aria-label="系统接管设置">
+      <div class="detail-toolbar">
+        <button type="button" class="detail-back" data-control-back aria-label="返回控制主页">‹ <span>返回</span></button>
+        <strong>系统接管</strong>
+      </div>
+      <div class="proto-body">
+        <p id="handoffSaveStatus" class="save-status" role="status">设置自动保存，关闭页面或重启后继续生效。</p>
+        <p id="handoffStatus" class="detail" role="status">正在读取系统接管设置…</p>
+        <label class="switch-row">
+          <input type="checkbox" id="handoffSwitch" role="switch" aria-describedby="handoffNote">
+          <span class="switch-track" aria-hidden="true"></span>
+          <span class="switch-text">按电量交回系统：<span id="handoffEnabled">读取中…</span></span>
+        </label>
+        <div class="limit-control">
+          <div class="name">系统接管电量（%）</div>
+          <input type="range" id="handoffSocRange" min="0" max="100" step="1" value="100" aria-label="系统接管电量滑动条">
+          <input type="number" id="handoffSocInput" min="0" max="100" step="1" value="100" aria-label="系统接管电量输入框">
+          <div class="detail">达到 <strong id="handoffSocValue">100</strong>% 交回系统 · 默认 100%，可调 0–100%</div>
+        </div>
+        <p id="handoffNote" class="vote-note">默认关闭。达到接管电量后撤销模块的强制投票，结束模块的间断暂停，由系统完成末段充电和充满判定。本次插电内保持系统控制，即使电量回落也不重新接管；拔线、关闭此开关或修改接管电量后重新判断。此功能独立于恒压调节，适用于 UFCS / PPS。</p>
+        <div class="setting-divider" role="separator" aria-hidden="true"></div>
+        <label class="switch-row">
+          <input type="checkbox" id="handoffBypassSwitch" role="switch" checked aria-describedby="handoffBypassNote">
+          <span class="switch-track" aria-hidden="true"></span>
+          <span class="switch-text">旁路供电时交回系统：<span id="handoffBypassEnabled">读取中…</span></span>
+        </label>
+        <p id="handoffBypassState" class="detail" role="status">正在读取系统旁路开关…</p>
+        <p id="handoffBypassNote" class="vote-note">默认开启，只读取系统旁路开关，不修改旁路设置。开启旁路后交回系统，关闭后恢复模块控制；若已达到上方接管电量，则继续由系统控制。约每秒检查一次，状态读取异常时暂交系统；系统未提供旁路开关时会显示不可用。自动监测与对应协议开关仍须开启，模块才会恢复控制。温度伪装独立运行。</p>
+      </div>
+    </section>
+    <section id="control-detail-cv" class="control-detail" hidden aria-label="恒压调节设置">
+      <div class="detail-toolbar">
+        <button type="button" class="detail-back" data-control-back aria-label="返回控制主页">‹ <span>返回</span></button>
+        <strong>恒压调节</strong>
+      </div>
+      <div class="proto-body">
+        <p id="cvSaveStatus" class="save-status" role="status">设置自动保存，重启后继续生效。</p>
+        <label class="switch-row">
+          <input type="checkbox" id="cvSwitch" role="switch" checked aria-describedby="cvNote">
+          <span class="switch-track" aria-hidden="true"></span>
+          <span class="switch-text">恒压调节：<span id="cvEnabled">读取中…</span></span>
+        </label>
+        <p id="cvStatus" class="detail" role="status">正在读取恒压调节设置…</p>
+        <div class="limit-control">
+          <div class="name">启用电量（%）</div>
+          <input type="range" id="cvStartRange" min="0" max="100" step="1" value="80" aria-label="恒压启用电量滑动条">
+          <input type="number" id="cvStartInput" min="0" max="100" step="1" value="80" aria-label="恒压启用电量输入框">
+          <div class="detail">达到 <strong id="cvStartValue">80</strong>% 开始调节 · 默认 80，可调 0–100；0 表示全部电量生效</div>
+        </div>
+        <div class="setting-divider" role="separator" aria-hidden="true"></div>
+        <div class="limit-control">
+          <div class="name">目标压差（mV）</div>
+          <input type="range" id="cvOffsetRange" min="-50" max="0" step="1" value="-5" aria-label="恒压目标压差滑动条">
+          <input type="number" id="cvOffsetInput" min="-50" max="0" step="1" value="-5" aria-label="恒压目标压差输入框">
+          <div class="detail">协议设定电压 + <strong id="cvOffsetValue">-5</strong> mV 为恒压目标 · 默认 -5，可调 -50–0</div>
+        </div>
+        <div class="setting-divider" role="separator" aria-hidden="true"></div>
+        <div class="limit-control">
+          <div class="name">保持压差（±mV）</div>
+          <input type="range" id="cvBandRange" min="1" max="15" step="1" value="5" aria-label="恒压保持压差滑动条">
+          <input type="number" id="cvBandInput" min="1" max="15" step="1" value="5" aria-label="恒压保持压差输入框">
+          <div class="detail">软目标附近 ±<strong id="cvBandValue">5</strong> mV 保持 · 默认 5，可调 1–15</div>
+        </div>
+        <div class="setting-divider" role="separator" aria-hidden="true"></div>
+        <div class="limit-control">
+          <div class="name">正常升流步进上限（mA）</div>
+          <input type="range" id="cvRaiseRange" min="10" max="500" step="10" value="50" aria-label="恒压升流步进滑动条">
+          <input type="number" id="cvRaiseInput" min="10" max="500" step="1" value="50" aria-label="恒压升流步进输入框">
+          <div class="detail">每次最多 <strong id="cvRaiseValue">50</strong> mA · 默认 50，可调 10–500</div>
+        </div>
+        <div class="setting-divider" role="separator" aria-hidden="true"></div>
+        <div class="limit-control">
+          <div class="name">降流步进上限（mA）</div>
+          <input type="range" id="cvLowerRange" min="10" max="1000" step="10" value="100" aria-label="恒压降流步进滑动条">
+          <input type="number" id="cvLowerInput" min="10" max="1000" step="1" value="100" aria-label="恒压降流步进输入框">
+          <div class="detail">每次最多 <strong id="cvLowerValue">100</strong> mA · 默认 100，可调 10–1000</div>
+        </div>
+        <div class="setting-divider" role="separator" aria-hidden="true"></div>
+        <div class="limit-control">
+          <div class="name">调整后等待时间（毫秒）</div>
+          <input type="range" id="cvWaitRange" min="200" max="10000" step="100" value="1500" aria-label="恒压等待时间滑动条">
+          <input type="number" id="cvWaitInput" min="200" max="10000" step="1" value="1500" aria-label="恒压等待时间输入框">
+          <div class="detail">写入后等待 <strong id="cvWaitValue">1500</strong> 毫秒 · 默认 1500（1.5 秒），可调 200–10000</div>
+        </div>
+        <div class="setting-divider" role="separator" aria-hidden="true"></div>
+        <div class="limit-control">
+          <div class="name">快速降流触发压差（+mV）</div>
+          <input type="range" id="cvFastGapRange" min="0" max="50" step="1" value="15" aria-label="快速降流触发压差滑动条" aria-describedby="cvFastGapNote">
+          <input type="number" id="cvFastGapInput" min="0" max="50" step="1" value="15" aria-label="快速降流触发压差输入框" aria-describedby="cvFastGapNote">
+          <div id="cvFastGapNote" class="detail">电压超过设定值且达到 +<strong id="cvFastGapValue">15</strong> mV 时快速降流 · 默认 +15，可调 0–+50；0 表示一超过设定电压就快速降流。调大将延后快速降流，可能增加瞬时越界。</div>
+        </div>
+        <p id="cvNote" class="vote-note">恒压目标 = 协议设定电压 + 本页目标压差；例如 4560mV 与 -20mV 对应 4540mV。目标压差 0mV 表示目标等于设定电压，提前量更小，越界风险可能增加；轻微越界仍按本页降流步进和等待时间调节，不连续猛降；达到“设定电压 + 快速降流触发压差”且超过设定电压时，快速降流优先，不修改硬件保护阈值。启用后，电量降至启用值以下 2 个百分点之外才退出。实际步进取本页上限与当前区间或通用步进的较小值。通用或区间的升流截止压差继续用于普通自适应。</p>
+        <button id="cvReset" type="button" class="button">恢复默认</button>
       </div>
     </section>
     <section id="control-detail-thermal" class="control-detail" hidden aria-label="温度控制设置">
@@ -442,7 +570,7 @@
       <div class="proto-body">
         <p id="thermalSaveStatus" class="save-status" role="status">设置自动保存，关闭页面或重启后继续生效。</p>
         <label class="switch-row">
-          <input type="checkbox" id="thermalSwitch" role="switch" aria-describedby="thermalNote">
+          <input type="checkbox" id="thermalSwitch" role="switch" checked aria-describedby="thermalNote">
           <span class="switch-track" aria-hidden="true"></span>
           <span class="switch-text">温度控制：<span id="thermalEnabled">读取中…</span></span>
         </label>
@@ -450,9 +578,9 @@
         <p id="thermalStatus" class="detail" role="status">正在读取温度控制状态…</p>
         <div class="limit-control">
           <div class="name">温度上限（°C）</div>
-          <input type="range" id="thermalLimitRange" min="20" max="60" step="1" value="45" aria-label="温度上限滑动条">
-          <input type="number" id="thermalLimitInput" min="20" max="60" step="1" value="45" aria-label="温度上限输入框">
-          <div class="detail">温度上限：<strong id="thermalLimitValue">45</strong> °C · 默认 45，可调范围 20–60</div>
+          <input type="range" id="thermalLimitRange" min="20" max="60" step="1" value="50" aria-label="温度上限滑动条">
+          <input type="number" id="thermalLimitInput" min="20" max="60" step="1" value="50" aria-label="温度上限输入框">
+          <div class="detail">温度上限：<strong id="thermalLimitValue">50</strong> °C · 默认 50，可调范围 20–60</div>
         </div>
         <div class="setting-divider" role="separator" aria-hidden="true"></div>
         <div class="limit-control">
@@ -468,7 +596,7 @@
           <input type="number" id="thermalGapInput" min="1" max="5" step="1" value="2" aria-label="恢复温差输入框">
           <div class="detail">恢复温差：<strong id="thermalGapValue">2</strong> °C · 默认 2，可调范围 1–5</div>
         </div>
-        <p id="thermalNote" class="vote-note">达到温度上限后限制投票目标，并禁止升流；降至「温度上限 − 恢复温差」及以下后解除，按原有步进恢复。每秒读取真实电池温度，仅在自动监测开启且 UFCS / PPS 已接管时控制。读温失败时限制到 1000 mA 与所设限流值中的较小值。限流不等于停止充电。</p>
+        <p id="thermalNote" class="vote-note">达到温度上限后限制投票目标，并禁止升流；降至「温度上限 − 恢复温差」及以下后解除，按原有步进恢复。默认开启，温度上限 50°C。每秒读取真实电池温度，仅在自动监测开启且 UFCS / PPS 已接管时控制。读温失败时限制到 1000 mA 与所设限流值中的较小值。限流不等于停止充电。</p>
       </div>
     </section>
     <section id="control-detail-pulse" class="control-detail" hidden aria-label="间断充电设置">
@@ -486,9 +614,9 @@
         <p id="pulseStatus" class="detail" role="status">正在读取间断充电状态…</p>
         <div class="limit-control">
           <div class="name">充电时间（秒）</div>
-          <input type="range" id="pulseChargeRange" min="1" max="1200" step="1" value="5" aria-label="充电时间滑动条">
-          <input type="number" id="pulseChargeInput" min="1" max="1200" step="1" value="5" aria-label="充电时间输入框">
-          <div class="detail">充电时间：<strong id="pulseChargeValue">5</strong> 秒 · 默认 5，可调范围 1–1200</div>
+          <input type="range" id="pulseChargeRange" min="1" max="1200" step="1" value="60" aria-label="充电时间滑动条">
+          <input type="number" id="pulseChargeInput" min="1" max="1200" step="1" value="60" aria-label="充电时间输入框">
+          <div class="detail">充电时间：<strong id="pulseChargeValue">60</strong> 秒 · 默认 60，可调范围 1–1200</div>
         </div>
         <div class="setting-divider" role="separator" aria-hidden="true"></div>
         <div class="limit-control">
@@ -500,7 +628,7 @@
         <div class="section-head"><h2>生效电量区间</h2><button type="button" id="pulseAdd" class="button primary" aria-label="添加间断充电电量区间">＋</button></div>
         <p id="pulseSoc" class="detail">当前电量：—</p>
         <div id="pulseRanges"></div>
-        <p id="pulseNote" class="vote-note">充电达到设定时间后，通过 MMI 充电使能接口请求停充，断开计时结束后恢复 MMI，并从当前区间的投票上限重新起步；温控仍优先限制目标。未添加区间时对全部电量生效；添加后只在所选区间内循环，例如 0–40%、60–80%，包含两端。退出区间、关闭功能或修改时间后恢复正常阶段。仅作用于已接管的 UFCS / PPS。MMI 停充可能使协议暂时退出；恢复后会等待协议重新在线。缺少接口、外部已停充或恢复失败会显示异常，不会强行开启其它来源关闭的充电。实际停充及恢复速度取决于驱动，计时存在处理误差。</p>
+        <p id="pulseNote" class="vote-note">充电达到设定时间后，通过 MMI 充电使能接口请求停充，断开计时结束后恢复 MMI，并保留已经收敛的投票目标；区间上限、温控与电压检查仍会限制目标。未添加区间时对全部电量生效；添加后只在所选区间内循环，例如 0–40%、60–80%，包含两端。退出区间、关闭功能或修改时间后恢复正常阶段。仅作用于已接管的 UFCS / PPS。MMI 停充可能使协议暂时退出；恢复后会等待协议重新在线。缺少接口、外部已停充或恢复失败会显示异常，不会强行开启其它来源关闭的充电。实际停充及恢复速度取决于驱动，计时存在处理误差。</p>
       </div>
     </section>
     <section id="control-detail-faketemp" class="control-detail" hidden aria-label="温度伪装设置">
@@ -511,9 +639,9 @@
       <div class="proto-body">
         <p id="fakeSaveStatus" class="save-status" role="status">设置自动保存，关闭页面或重启后继续生效。</p>
         <label class="switch-row">
-          <input type="checkbox" id="fakeSwitch" role="switch" aria-describedby="fakeNote">
+          <input type="checkbox" id="fakeSwitch" role="switch" checked aria-describedby="fakeNote">
           <span class="switch-track" aria-hidden="true"></span>
-          <span class="switch-text">温度伪装：<span id="fakeEnabled">读取中…</span></span>
+          <span class="switch-text">固定温度伪装：<span id="fakeEnabled">读取中…</span></span>
         </label>
         <p id="fakeStatus" class="detail" role="status">正在读取温度伪装状态…</p>
         <p id="fakeHoraeStatus" class="detail" role="status">正在读取 horae 命令执行结果…</p>
@@ -523,7 +651,21 @@
           <input type="number" id="fakeValueInput" min="20" max="45" step="0.5" value="36" aria-label="伪装温度输入框">
           <div class="detail">伪装温度：<strong id="fakeValueValue">36.0</strong> °C · 默认 36.0，可调范围 20.0–45.0</div>
         </div>
-        <p id="fakeNote" class="vote-note">开启时将 horae 切换到测试模式，再把 /proc/shell-temp 写成所设的固定外壳温度（通道 0/1/2）并将节点设为只读，保留 horae 读取权限；关闭或卸载时请求恢复 horae 正常模式，并恢复节点可写；若系统忽略退出参数，会短暂重启 horae 后核验退出。页面显示本次开机最后一次模式命令的执行结果。这是伪装读数而非真实测温，会让依赖外壳温度的热控策略失效，可能导致过热与电池损伤，请自行评估风险。</p>
+        <div class="setting-divider"></div>
+        <label class="switch-row">
+          <input type="checkbox" id="fakeAdaptiveSwitch" role="switch" aria-describedby="fakeAdaptiveNote">
+          <span class="switch-track" aria-hidden="true"></span>
+          <span class="switch-text">自适应伪装：<span id="fakeAdaptiveEnabled">读取中…</span></span>
+        </label>
+        <div class="limit-control">
+          <div class="name">低于真实电池温度（°C）</div>
+          <input type="range" id="fakeOffsetRange" min="0" max="20" step="1" value="5" aria-label="自适应伪装温差滑动条">
+          <input type="number" id="fakeOffsetInput" min="0" max="20" step="1" value="5" aria-label="自适应伪装温差输入框">
+          <div class="detail">伪装温差：<strong id="fakeOffsetValue">5</strong> °C · 可调范围 0–20</div>
+        </div>
+        <p id="fakeAdaptiveReading" class="detail" role="status">开启后显示真实电池温度与伪装温度。</p>
+        <p id="fakeAdaptiveNote" class="vote-note">默认关闭，温差预设 5°C。伪装温度 = 真实电池温度 − 温差，例如 40°C − 5°C = 35°C。每秒读取真实电池温度并更新，关闭页面或自动监测后仍运行；读取失败时停止伪装并尝试恢复正常温控，后台自动重试。与固定温度伪装只能二选一，开启一种会自动关闭另一种；两种都关闭时恢复正常温控。</p>
+        <p id="fakeNote" class="vote-note">固定模式默认开启，伪装温度 36°C。两种模式都将 horae 切换到测试模式，再写入 /proc/shell-temp 的通道 0/1/2 并将节点设为只读，保留 horae 读取权限；全部关闭或卸载时请求恢复 horae 正常模式，并恢复节点可写；若系统忽略退出参数，会短暂重启 horae 后核验退出。页面显示本次开机最后一次模式命令的执行结果。这是伪装读数而非真实测温，会让依赖外壳温度的热控策略失效，可能导致过热与电池损伤，请自行评估风险。</p>
       </div>
     </section>
     </section>
@@ -677,38 +819,38 @@
       </div>
       <div class="history-readings">
         <p id="historyChargeState" class="history-charge-state">等待采样</p>
-        <div class="history-reading-grid">
-          <div class="history-reading" title="电池端功率"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="6" width="17" height="14" rx="2"/><path d="M7 3h9M23 10v6M7 13h9M11.5 9v8"/></svg><span id="historyValue-power" aria-label="电池端功率">—</span></div>
-          <div class="history-reading" title="采样经过时间"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><span id="historyValue-duration" aria-label="采样经过时间">—</span></div>
-          <div class="history-reading" title="真实电池温度"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 14.8V5a3 3 0 0 1 6 0v9.8a5 5 0 1 1-6 0Z"/><path d="M12 9v9"/></svg><span id="historyValue-temp" aria-label="真实电池温度">—</span></div>
-          <div class="history-reading" title="电池电压"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="5" width="12" height="17" rx="1"/><path d="M10 5V2h4v3M9 10h6M9 14h6M9 18h6"/></svg><span id="historyValue-voltage" aria-label="电池电压">—</span></div>
+        <div class="history-session-strip" aria-label="本次充电摘要">
+          <span id="historySessionTime">暂无充电记录</span><span>时长 <span id="historyDuration">—</span></span><span>电量 <span id="historySocGain">—</span></span>
         </div>
+      </div>
+    </section>
+    <p id="historyState" class="detail" role="status">正在读取记录状态…</p>
+    <figure class="history-chart">
+      <figcaption><span>充电曲线 / 时间</span><span id="historyAxisLabel" class="detail">纵轴：功率（电池端） / W</span></figcaption>
+      <div class="history-legend" role="group" aria-label="选择图表纵轴，五条曲线始终显示">
+        <button type="button" id="historyAxis-power" class="history-series" style="--series-color:#1677e8" aria-pressed="true" aria-label="使用功率纵轴">
+          <span class="history-series-name">功率</span><span class="history-chart-values"><span class="history-chart-max">最高 <span id="historyMax-power">—</span></span><span id="historyChartValue-power" class="history-chart-value" aria-label="当前功率">—</span></span>
+        </button>
+        <button type="button" id="historyAxis-soc" class="history-series" style="--series-color:#16803c" aria-pressed="false" aria-label="使用电量纵轴">
+          <span class="history-series-name">电量</span><span class="history-chart-values"><span class="history-chart-max">最高 <span id="historyMax-soc">—</span></span><span id="historyChartValue-soc" class="history-chart-value" aria-label="当前电量">—</span></span>
+        </button>
+        <button type="button" id="historyAxis-temp" class="history-series" style="--series-color:#d32f2f" aria-pressed="false" aria-label="使用温度纵轴">
+          <span class="history-series-name">温度</span><span class="history-chart-values"><span class="history-chart-max">最高 <span id="historyMax-temp">—</span></span><span id="historyChartValue-temp" class="history-chart-value" aria-label="当前温度">—</span></span>
+        </button>
+        <button type="button" id="historyAxis-voltage" class="history-series" style="--series-color:#d4aa00" aria-pressed="false" aria-label="使用电压纵轴">
+          <span class="history-series-name">电压</span><span class="history-chart-values"><span class="history-chart-max">最高 <span id="historyMax-voltage">—</span></span><span id="historyChartValue-voltage" class="history-chart-value" aria-label="当前电压">—</span></span>
+        </button>
+        <button type="button" id="historyAxis-vote" class="history-series" style="--series-color:#161616" aria-pressed="false" aria-label="使用投票值纵轴">
+          <span class="history-series-name">投票值</span><span class="history-chart-values"><span class="history-chart-max">最高 <span id="historyMax-vote">—</span></span><span id="historyChartValue-vote" class="history-chart-value" aria-label="当前投票值">—</span></span>
+        </button>
         <label class="switch-row history-cell-toggle">
           <span class="switch-text">双电芯功率</span>
           <input type="checkbox" id="historyDualCell" role="switch" aria-describedby="historyDualCellNote">
           <span class="switch-track" aria-hidden="true"></span>
         </label>
       </div>
-    </section>
-    <div class="history-session-strip" aria-label="本次充电摘要">
-      <span id="historySessionTime">暂无充电记录</span><span id="historyDuration">—</span><span id="historySocGain">—</span>
-    </div>
-    <p id="historyState" class="detail" role="status">正在读取记录状态…</p>
-    <figure class="history-chart">
-      <figcaption><span>功率 / 时间</span><span id="historyChartValue-power" class="history-chart-value">—</span></figcaption>
-      <canvas id="historyCanvas-power" class="history-canvas" tabindex="0" role="img" aria-label="功率曲线，等待采样" aria-describedby="historyChartNote historyPoint">功率曲线。详细采样可在下方数据表查看。</canvas>
-    </figure>
-    <figure class="history-chart">
-      <figcaption><span>电量 / 时间</span><span id="historyChartValue-soc" class="history-chart-value">—</span></figcaption>
-      <canvas id="historyCanvas-soc" class="history-canvas" tabindex="0" role="img" aria-label="电量曲线，等待采样" aria-describedby="historyChartNote historyPoint">电量曲线。详细采样可在下方数据表查看。</canvas>
-    </figure>
-    <figure class="history-chart">
-      <figcaption><span>温度 / 时间</span><span id="historyChartValue-temp" class="history-chart-value">—</span></figcaption>
-      <canvas id="historyCanvas-temp" class="history-canvas" tabindex="0" role="img" aria-label="温度曲线，等待采样" aria-describedby="historyChartNote historyPoint">温度曲线。详细采样可在下方数据表查看。</canvas>
-    </figure>
-    <figure class="history-chart">
-      <figcaption><span>电压 / 时间</span><span id="historyChartValue-voltage" class="history-chart-value">—</span></figcaption>
-      <canvas id="historyCanvas-voltage" class="history-canvas" tabindex="0" role="img" aria-label="电压曲线，等待采样" aria-describedby="historyChartNote historyPoint">电压曲线。详细采样可在下方数据表查看。</canvas>
+      <canvas id="historyCanvas" class="history-canvas" tabindex="0" role="img" aria-label="功率、电量、温度、电压和投票值合并曲线，等待采样" aria-describedby="historyChartNote historyPoint historyVoteNote">功率、电量、温度、电压与投票值曲线。详细采样可在下方数据表查看。</canvas>
+      <p class="history-axis-note"><span>点参数切换纵轴 · 双指缩放</span><span>选点 <span id="historyValue-duration" aria-label="采样经过时间">—</span></span></p>
     </figure>
     <details class="status-panel history-settings">
       <summary>时间范围与采样数据</summary>
@@ -720,10 +862,11 @@
         <div class="history-range-label"><label for="historyRangeEnd">结束 · <span id="historyRangeEndTime">0:00:00</span></label></div>
         <input id="historyRangeEnd" type="range" min="0" max="1000" step="1" value="1000" disabled>
       </div>
-      <p id="historyChartNote" class="vote-note">四张图表分别显示功率、电量、温度和电压，各自使用独立单位与刻度。触摸任意曲线可同步查看该时刻的参数，键盘左右方向键逐点查看；拖动开始、结束滑条可放大时间范围。横轴使用真实经过时间，全程至少显示 5 分钟。</p>
+      <p id="historyChartNote" class="vote-note">五条曲线叠加在一张图上，共用时间轴，各自按独立范围缩放，不同曲线的高度不能直接比较数值大小。点击参数名称切换左侧纵轴的单位和刻度，五条曲线始终保留。触摸图表可同步查看该时刻的五项参数，键盘左右方向键逐点查看；双指张开放大、捏合缩小时间范围，双指移动可平移；也可拖动开始、结束滑条缩放。手势中即时绘图，结束后重新读取细节。横轴使用真实经过时间，全程至少显示 5 分钟。最高值始终统计整次原始记录，不随缩放或点选改变。</p>
+      <p id="historyVoteNote" class="vote-note">投票值为模块实际生效的强制投票目标（mA），不等于实测电池电流。未接管、无法核验或旧记录未采集时显示“—”；间断暂停充电时保留的投票仍按实际值记录。</p>
       <p id="historyDualCellNote" class="vote-note">双电芯适用于串联双电芯且节点提供单芯电压的机型。开启后估算功率 × 2，电压仍显示节点原值；仅影响显示，原始记录不变。</p>
       <p class="vote-note">功率按电池电压 × 电流绝对值估算，代表电池端功率，不区分充放电方向。温度来自真实电池节点，缺失值显示为“—”。长记录保留峰谷，缩小范围后重新读取细节；原始记录只保存在手机中。</p>
-      <div class="history-table-wrap"><table class="history-table"><caption class="detail">最近 20 个显示点</caption><thead><tr><th scope="col">时间</th><th scope="col">电量</th><th scope="col">温度</th><th scope="col">电压</th><th scope="col">功耗</th></tr></thead><tbody id="historyTable"></tbody></table></div>
+      <div class="history-table-wrap"><table class="history-table"><caption class="detail">最近 20 个显示点</caption><thead><tr><th scope="col">时间</th><th scope="col">电量</th><th scope="col">温度</th><th scope="col">电压</th><th scope="col">功耗</th><th scope="col">投票值</th></tr></thead><tbody id="historyTable"></tbody></table></div>
     </details>
   </section>
   </main>
@@ -762,15 +905,15 @@
       <p class="detail">此处保存独立参数，不修改通用设置。初始值超过本区间投票上限时会按上限起步。</p>
       <div class="limit-control">
         <div class="name">投票值上限（mA）</div>
-        <input type="range" id="socVoteMaxRange" min="1000" max="13500" step="50" value="9000" aria-label="区间投票值上限滑动条">
-        <input type="number" id="socVoteMaxInput" min="1000" max="13500" step="50" value="9000" aria-label="区间投票值上限输入框">
-        <div class="detail"><strong id="socVoteMaxValue">9000</strong> mA · 范围 1000–13500</div>
+        <input type="range" id="socVoteMaxRange" min="1000" max="13500" step="50" value="10900" aria-label="区间投票值上限滑动条">
+        <input type="number" id="socVoteMaxInput" min="1000" max="13500" step="50" value="10900" aria-label="区间投票值上限输入框">
+        <div class="detail"><strong id="socVoteMaxValue">10900</strong> mA · 范围 1000–13500</div>
       </div>
       <div class="limit-control">
         <div class="name">投票初始值（mA）</div>
-        <input type="range" id="socInitialRange" min="1000" max="10000" step="100" value="1000" aria-label="区间投票初始值滑动条">
-        <input type="number" id="socInitialInput" min="1000" max="10000" step="100" value="1000" aria-label="区间投票初始值输入框">
-        <div class="detail"><strong id="socInitialValue">1000</strong> mA · 范围 1000–10000</div>
+        <input type="range" id="socInitialRange" min="1000" max="10000" step="100" value="2000" aria-label="区间投票初始值滑动条">
+        <input type="number" id="socInitialInput" min="1000" max="10000" step="100" value="2000" aria-label="区间投票初始值输入框">
+        <div class="detail"><strong id="socInitialValue">2000</strong> mA · 范围 1000–10000</div>
       </div>
       <div class="limit-control">
         <div class="name">监控时间（ms）</div>
@@ -786,9 +929,9 @@
       </div>
       <div class="limit-control">
         <div class="name">降低步进（mA）</div>
-        <input type="range" id="socLowerRange" min="100" max="1000" step="10" value="500" aria-label="区间降低步进滑动条">
-        <input type="number" id="socLowerInput" min="100" max="1000" step="10" value="500" aria-label="区间降低步进输入框">
-        <div class="detail"><strong id="socLowerValue">500</strong> mA · 范围 100–1000</div>
+        <input type="range" id="socLowerRange" min="100" max="1000" step="10" value="1000" aria-label="区间降低步进滑动条">
+        <input type="number" id="socLowerInput" min="100" max="1000" step="10" value="1000" aria-label="区间降低步进输入框">
+        <div class="detail"><strong id="socLowerValue">1000</strong> mA · 范围 100–1000</div>
       </div>
       <div class="limit-control">
         <div class="name">升流截止压差（mV）</div>

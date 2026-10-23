@@ -17,22 +17,26 @@ const prop = readFileSync(join(dir,'module.prop'),'utf8');
 
 test('UI、模块与安装包版本一致，温度控制与温度伪装入口及参数范围明确',()=>{
   const version=/^version=([^\n]+)/m.exec(prop)[1];
-  assert.equal(version,'0.9.12-overview-cleanup');
-  assert.match(html,/ADAPTIVE · v0\.9\.12/);
+  assert.equal(version,'0.9.29-compact-chart');
+  assert.ok(html.includes('ADAPTIVE · v'+version.split('-')[0]));
   assert.ok(readFileSync(join(dir,'build.mjs'),'utf8').includes('oplus-votable-'+version+'.zip'));
+  for(const kind of ['Range','Input']) assert.match(html,new RegExp('id="cvFastGap'+kind+'" min="0" max="50" step="1" value="15"'));
+  for(const [name,min,max,value] of [['Gap',-50,0,-10],['Step',0,1000,200]]) for(const kind of ['Range','Input']) {
+    assert.match(html,new RegExp('id="advEarly'+name+kind+'" min="'+min+'" max="'+max+'" step="1" value="'+value+'"'));
+  }
   assert.match(html,/data-detail="pulse"/);
   assert.match(html,/id="pulseSwitch" role="switch"/);
-  for(const [name,min,max,value] of [['Charge',1,1200,5],['Pause',0,60000,1000]]) {
+  for(const [name,min,max,value] of [['Charge',1,1200,60],['Pause',0,60000,1000]]) {
     for(const kind of ['Range','Input']) assert.match(html,new RegExp('id="pulse'+name+kind+'" min="'+min+'" max="'+max+'" step="1" value="'+value+'"'));
   }
   assert.match(html,/data-detail="thermal"/);
   assert.match(html,/id="thermalSwitch" role="switch"/);
-  for(const [name,min,max,value] of [['Limit',20,60,45],['Vote',500,5000,1000],['Gap',1,5,2]]) {
+  for(const [name,min,max,value] of [['Limit',20,60,50],['Vote',500,5000,1000],['Gap',1,5,2]]) {
     for(const kind of ['Range','Input']) {
       assert.match(html,new RegExp('id="thermal'+name+kind+'" min="'+min+'" max="'+max+'"[^>]*value="'+value+'"'));
     }
   }
-  // 温度伪装是独立入口，默认关闭，范围 20.0–45.0°C、步进 0.5。
+  // 温度伪装是独立入口，默认开启，范围 20.0–45.0°C、步进 0.5。
   assert.match(html,/data-detail="faketemp"/);
   assert.match(html,/id="control-detail-faketemp"/);
   assert.match(html,/id="fakeSwitch" role="switch"/);
@@ -357,18 +361,18 @@ test('WebUI 提供 UFCS/PPS 独立投票上限，PPS 最高 5800',()=>{
 test('电流控制高级参数面板使用预定义命令，且不改动任意输入',()=>{
   const markup=readFileSync(join(dir,'webroot/index.html'),'utf8');
   const advanced=markup.split('id="control-detail-advanced"')[1].split('</section>')[0];
-  assert.equal((advanced.match(/class="setting-divider"/g)||[]).length,4);
-  for (const [id,value] of [['advInitial','1000'],['advInterval','100'],
-    ['advRaise','100'],['advLower','500'],['advGap','-50']]) {
+  assert.equal((advanced.match(/class="setting-divider"/g)||[]).length,6);
+  for (const [id,value] of [['advInitial','2000'],['advInterval','100'],
+    ['advRaise','100'],['advLower','1000'],['advGap','-50']]) {
     assert.match(advanced,new RegExp('id="'+id+'Value">[^<]+</strong> [^·]+· 默认 '+value+'，可调范围'));
   }
   assert.match(advanced,/id="advReset"[^>]*>恢复默认<\/button>/);
   for (const kind of ['Range','Input']) {
     assert.match(advanced,new RegExp('id="advRaise'+kind+'" min="10" max="500" step="10" value="100"'));
-    assert.match(advanced,new RegExp('id="advLower'+kind+'" min="100" max="1000" step="10" value="500"'));
+    assert.match(advanced,new RegExp('id="advLower'+kind+'" min="100" max="1000" step="10" value="1000"'));
   }
   assert.match(markup,/这里的参数为高级参数，非必要请勿调节/);
-  for (const f of ['advInitial','advInterval','advRaise','advLower','advGap']) {
+  for (const f of ['advInitial','advInterval','advRaise','advLower','advGap','advEarlyGap','advEarlyStep']) {
     assert.match(markup,new RegExp('id="'+f+'Range"'));
     assert.match(markup,new RegExp('id="'+f+'Input"'));
     assert.match(markup,new RegExp('id="'+f+'Value"'));
@@ -392,7 +396,9 @@ test('温度伪装面板只使用预定义命令读写，且不改动温控设�
   assert.match(markup,/data-detail="faketemp" aria-controls="control-detail-faketemp"/);
   const section=markup.split('id="control-detail-faketemp"')[1].split('</section>')[0];
   for (const id of ['fakeSaveStatus','fakeSwitch','fakeEnabled','fakeStatus',
-    'fakeValueRange','fakeValueInput','fakeValueValue','fakeNote','fakeHoraeStatus']) {
+    'fakeValueRange','fakeValueInput','fakeValueValue','fakeNote','fakeHoraeStatus',
+    'fakeAdaptiveSwitch','fakeAdaptiveEnabled','fakeOffsetRange','fakeOffsetInput',
+    'fakeOffsetValue','fakeAdaptiveReading','fakeAdaptiveNote']) {
     assert.match(section,new RegExp('id="'+id+'"'));
   }
   assert.match(app,/function paintFake\(/);
@@ -408,7 +414,7 @@ test('温度伪装面板只使用预定义命令读写，且不改动温控设�
   assert.match(app,/FAKETEMP_ENABLED/);
   assert.match(app,/FAKETEMP_VALUE_DECI/);
   assert.match(app,/FAKETEMP_STATE/);
-  assert.match(app,/CONTROL_DETAILS = \['UFCS', 'PPS', 'advanced', 'thermal', 'faketemp', 'pulse'\]/);
+  assert.match(app,/CONTROL_DETAILS = \['UFCS', 'PPS', 'advanced', 'thermal', 'faketemp', 'pulse', 'cv', 'handoff'\]/);
 });
 
 test('WebUI 仅使用预定义控制命令，不接受用户输入的任意命令',()=>{

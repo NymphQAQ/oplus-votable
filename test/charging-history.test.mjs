@@ -17,8 +17,9 @@ async function waitFor(fn,label) {
 }
 function fixture(t,{int32=false}={}) {
   const base=mkdtempSync(join(tmpdir(),'opv-history-'));
-  const data=join(base,'data'),sys=join(base,'power_supply'),bin=join(base,'bin'),dir=join(data,'charging-history');
-  for(const d of [data,dir,bin,...['battery','usb','wireless','ac'].map(n=>join(sys,n))])mkdirSync(d,{recursive:true});
+  const children=[];
+  const data=join(base,'data'),sys=join(base,'power_supply'),bin=join(base,'bin'),dir=join(data,'charging-history'),votes=join(base,'votes');
+  for(const d of [data,dir,bin,...['UFCS_CURR','PPS_CURR'].map(n=>join(votes,n)),...['battery','usb','wireless','ac'].map(n=>join(sys,n))])mkdirSync(d,{recursive:true});
   const put=(p,v)=>writeFileSync(p,String(v));
   for(const [n,v] of Object.entries({capacity:20,temp:350,voltage_now:4500000,current_now:-2000,model_name:'oplus battery',status:'Charging'}))put(join(sys,'battery',n),v);
   for(const s of ['usb','wireless','ac'])put(join(sys,s,'online'),0);
@@ -29,6 +30,7 @@ function fixture(t,{int32=false}={}) {
   const shell=join(base,'charging-history.sh');
   put(join(base,'cmdline'),'sh\0'+shell+'\0--run\0');
   let script=source.replaceAll('/data/adb/oplus-votable',data).replaceAll('/sys/class/power_supply',sys)
+    .replaceAll('/proc/oplus-votable',votes)
     .replaceAll('/proc/sys/kernel/random/boot_id',join(base,'boot')).replaceAll('/proc/uptime',join(base,'uptime'))
     .replaceAll('/proc/$pid/cmdline',join(base,'cmdline'));
   // Android mksh 的 test 数字比较使用有符号 32 位整数。
@@ -49,12 +51,46 @@ function fixture(t,{int32=false}={}) {
   const clock=ms=>{put(join(base,'uptime'),(ms/1000).toFixed(3)+' 1');put(join(base,'epoch'),1792340000+Math.floor((ms-100000)/1000));};
   const start=()=>{
     const child=spawn('sh',[shell,'--run'],{env,stdio:'ignore'});
-    t.after(async()=>{if(child.exitCode===null){child.kill('SIGTERM');await new Promise(r=>child.once('exit',r));}});
+    children.push(child);
     return child;
   };
-  t.after(()=>rmSync(base,{recursive:true,force:true}));
-  return {base,data,sys,dir,put,shell,cmd,list,clock,start};
+  t.after(async()=>{
+    await Promise.all(children.map(child=>new Promise(resolve=>{
+      if(child.exitCode!==null||child.signalCode!==null)return resolve();
+      child.once('exit',resolve);child.kill('SIGTERM');
+    })));
+    rmSync(base,{recursive:true,force:true,maxRetries:5,retryDelay:20});
+  });
+  return {base,data,sys,dir,votes,put,shell,cmd,list,clock,start};
 }
+
+test('仅记录同次开机、存活进程且节点匹配的 UFCS/PPS 强制投票，撤销和旧数据留空',async t=>{
+  const f=fixture(t),lease=join(f.data,'active-test.lease');
+  const setVote=(proto,target,active=1)=>{
+    f.put(lease,[boot,100,process.pid,target,proto].join(' '));
+    const node=join(f.votes,proto==='ufcs'?'UFCS_CURR':'PPS_CURR');
+    f.put(join(node,'force_active'),active);f.put(join(node,'force_val'),target);
+  };
+  setVote('ufcs',9000);f.put(join(f.sys,'usb/online'),1);f.start();
+  await waitFor(()=>f.list().sessions.length===1,'开始采样');const key=f.list().active;
+  const read=()=>H.parseRecords(f.cmd('--read',key).stdout,key);
+  assert.equal(read().rows[0].vote,9000);
+  let tick=100000;
+  const next=async expected=>{
+    tick+=200;f.clock(tick);
+    await waitFor(()=>read().rows.at(-1).elapsed===tick-100000,'投票采样推进');
+    assert.equal(read().rows.at(-1).vote,expected);
+  };
+  setVote('ufcs',9000,0);await next(null);
+  setVote('ufcs',8000);f.put(join(f.votes,'UFCS_CURR/force_val'),7000);await next(null);
+  setVote('pps',5000);await next(5000);
+  setVote('ufcs',0);await next(0);
+  f.put(lease,['abcdefab',100,process.pid,0,'ufcs'].join(' '));await next(null);
+  setVote('ufcs',9000);f.put(lease,[boot,100,999999999,9000,'ufcs'].join(' '));await next(null);
+  setVote('ufcs',9000);f.put(lease,[boot,100,process.pid,9000,'../../bad'].join(' '));await next(null);
+  assert.equal(read().maxima.vote,9000);
+  assert.equal(readFileSync(join(f.votes,'UFCS_CURR/force_val'),'utf8'),'9000','采样只读投票节点');
+});
 
 test('连接创建记录，满电和间断阶段不拆分，拔线结束，再连接保存新记录',async t=>{
   const f=fixture(t);f.start();
@@ -169,14 +205,15 @@ test('空、零字节和损坏摘要不阻断有效记录，也不占翻页名�
   for(const [path,bytes] of originals)assert.deepEqual(readFileSync(path),bytes,'损坏摘要仍原样保留');
 });
 
-test('真实时间桶保留四项极值和低谷，窗口取完整原始点，返回始终不超过 1201 点',t=>{
+test('真实时间桶保留五项极值和低谷，窗口取完整原始点，全程峰值独立于窗口',t=>{
   const f=fixture(t);
-  const rows=Array.from({length:10000},(_,i)=>[1792340000+Math.floor(i/5),i*200+(i>=5000?60000:0),20,350,4500000,-2000000]);
-  const changes=[[1101,2,0],[1102,2,100],[1103,3,-500],[1104,3,1500],[1105,4,1000000],[1106,4,20000000],[1107,5,0],[1108,5,-100000000]];
+  const rows=Array.from({length:10000},(_,i)=>[1792340000+Math.floor(i/5),i*200+(i>=5000?60000:0),20,350,4500000,-2000000,5000]);
+  const changes=[[1101,2,0],[1102,2,100],[1103,3,-500],[1104,3,1500],[1105,4,1000000],[1106,4,20000000],[1107,5,0],[1108,5,-100000000],[1109,6,0],[1110,6,13500],[1111,6,'']];
   for(const [i,col,value] of changes)rows[i][col]=value;
   const csv=rows.map(r=>r.join(',')).join('\n')+'\n';f.put(join(f.dir,id+'.csv'),csv);
   const payload=f.cmd('--read',id).stdout,all=H.parseRecords(payload,id);
   assert.equal(all.total,10000);assert.ok(all.rows.length<=1201);
+  assert.deepEqual(all.maxima,{soc:100,temp:150,voltage:20,power:450,vote:13500});
   for(const [i] of changes)assert.ok(all.rows.some(p=>p.elapsed===rows[i][1]),'保留极值所在时刻 '+i);
   assert.deepEqual(all.rows.map(p=>p.elapsed),all.rows.map(p=>p.elapsed).toSorted((a,b)=>a-b));
   assert.equal(new Set(all.rows.map(p=>p.elapsed)).size,all.rows.length,'多项共用极值不重复');
@@ -187,6 +224,8 @@ test('真实时间桶保留四项极值和低谷，窗口取完整原始点，�
   assert.ok(large.rows.length<=1201);assert.ok(large.rows.every(p=>p.elapsed>=200000 && p.elapsed<=1800000));
   for(const [i] of changes)assert.ok(large.rows.some(p=>p.elapsed===rows[i][1]));
   const none=H.parseRecords(f.cmd('--read',id,'2100000','2200000').stdout,id);assert.equal(none.rows.length,0);assert.equal(none.total,10000);
+  assert.deepEqual(none.maxima,all.maxima,'窗口外的峰值也完整保留');
+  assert.deepEqual(H.parseRecords(f.cmd('--read',id,'0','200').stdout,id).maxima,all.maxima);
   f.put(join(f.dir,id+'.meta'),id+',1792340000,1792342000,'+rows.at(-1)[1]+',20,20,10000,UNPLUGGED\n');
   assert.equal(f.cmd('--read',id).stdout,payload,'匹配提交行数的元数据走单次扫描，结果一致');
   f.put(join(f.dir,id+'.meta'),id+',1792340000,1792340000,0,20,20,9999,ACTIVE\n');

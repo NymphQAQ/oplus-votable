@@ -4,7 +4,7 @@ import {createRequire} from 'node:module';
 
 const H=createRequire(import.meta.url)('../webroot/charging-history.js');
 
-test('各图使用自身单位和刻度，保留真实时间并为峰值留出空间',()=>{
+test('各曲线使用自身单位和刻度，保留真实时间并为峰值留出空间',()=>{
   const rows=[0,200,5000,10000].map((elapsed,i)=>({elapsed,soc:20+i,temp:35+i,voltage:4.5,power:20+i}));
   assert.equal(H.nearestIndex(rows,2500),1);
   assert.equal(H.nearestIndex(rows,4999),2);
@@ -43,4 +43,20 @@ test('双电芯只变换显示功率，电压与原始数据不变',()=>{
   assert.equal(H.chart(rows,'power',{dualCell:true}).points[0].value,18);
   assert.equal(H.chart(rows,'voltage',{dualCell:true}).points[0].value,4.5);
   assert.equal(JSON.stringify(rows),original);
+});
+
+test('投票曲线按 mA 独立缩放，兼容旧六列、混合记录和峰值摘要，拒绝越界',()=>{
+  const id='1792340000-12345678-100000';
+  const pack=csv=>'HISTORY_ID='+id+';HISTORY_TOTAL=3;HISTORY_DATA_B64='+Buffer.from(csv).toString('base64');
+  const old='1792340000,0,20,350,4500000,-2000000\n';
+  const data=H.parseRecords(pack('MAX,25,420,4600000,18000000000000,13500\n'+old+
+    '1792340001,1000,21,360,4510000,-3000000,9000\n1792340002,2000,22,370,4520000,-4000000,\n'),id);
+  assert.deepEqual(data.rows.map(p=>p.vote),[null,9000,null]);
+  assert.deepEqual(data.maxima,{soc:25,temp:42,voltage:4.6,power:18,vote:13500});
+  assert.equal(H.parseRecords(pack(old),id).maxima,null,'兼容旧响应但不猜测整次峰值');
+  const chart=H.chart(data.rows,'vote',{voteMax:data.maxima.vote,dualCell:true});
+  assert.equal(chart.min,0);assert.ok(chart.max>13500);assert.deepEqual(chart.points,[null,{elapsed:1000,value:9000},null]);
+  assert.equal(H.displayValue(data.rows[1],'vote',true),9000);
+  for(const csv of ['MAX,20,350,4500000,9000000000000,20001\n'+old,
+    old.trim()+',-1\n',old.trim()+',20001\n','MAX,20,350\n'+old]) assert.throws(()=>H.parseRecords(pack(csv),id));
 });

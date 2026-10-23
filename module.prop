@@ -1,7 +1,7 @@
 id=oplus-votable
 name=oplus-votable
-version=0.9.12-overview-cleanup
-versionCode=49
+version=0.9.29-compact-chart
+versionCode=66
 author=神之飞雪
-description=间断充电采用 MMI 停充后恢复，从当前区间上限起步并受温控限制，带自有停充异常恢复。浅色统计页、电量圆环与功率、电量、温度、电压四张独立曲线，支持范围缩放、触摸选点、峰谷保留及双电芯显示开关；后台目标每 0.2 秒记录，实时与历史数据本地保存。UFCS/PPS 自适应投票，支持 UFCS 电量区间独立参数及温度限制；温度伪装联动 horae 测试模式。
+description=充电统计采用紧凑布局，功率蓝、电量绿、温度红、电压黄、投票黑，五线均为实线，图表高度随屏幕调整。保留全程最高值、双指缩放、双电芯显示、自适应/固定温度伪装，以及原有 UFCS/PPS 控制、温控与充电记录。
 hasWebUi=true

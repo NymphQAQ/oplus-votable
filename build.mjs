@@ -18,7 +18,7 @@ const expected = [
   'webroot/index.html','webroot/app.js','webroot/log-utils.js',
   'webroot/log-reader.sh','webroot/charging-history.js',
 ];
-const output = join(root, 'dist', 'oplus-votable-0.9.12-overview-cleanup.zip');
+const output = join(root, 'dist', 'oplus-votable-0.9.29-compact-chart.zip');
 try {
   mkdirSync(join(stage, 'package'));
   for (const name of expected) {
